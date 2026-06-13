@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mdict Server - 管理后台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="adminApp()" x-init="init()">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-2xl font-bold text-gray-900">📚 Mdict Server</a>
+                <span class="text-sm text-gray-500">管理后台</span>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span class="text-sm text-gray-600" x-text="user?.username || 'Admin'"></span>
+                <a href="/" class="text-sm text-blue-600 hover:text-blue-800">返回查询</a>
+                <button @click="logout()" class="text-sm text-gray-600 hover:text-gray-800">登出</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Loading -->
+        <div x-show="loading" x-cloak class="text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+            <p class="mt-2 text-gray-600">加载中...</p>
+        </div>
+
+        <!-- Login Required -->
+        <div x-show="!loading && !user" x-cloak class="text-center py-12">
+            <p class="text-gray-600 mb-4">请先登录管理后台</p>
+            <button @click="showLogin = true" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                登录
+            </button>
+        </div>
+
+        <!-- Admin Content -->
+        <div x-show="!loading && user" x-cloak>
+            <!-- Dictionary Management -->
+            <section class="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <h2 class="text-xl font-bold text-gray-900 mb-4">📖 词典管理</h2>
+
+                <!-- Upload Area -->
+                <div
+                    class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-6 hover:border-blue-400 transition-colors"
+                    @dragover.prevent="dragover = true"
+                    @dragleave.prevent="dragover = false"
+                    @drop.prevent="handleDrop($event)"
+                    :class="{ 'border-blue-400 bg-blue-50': dragover }"
+                >
+                    <div class="text-gray-600">
+                        <p class="text-lg mb-2">拖拽 .mdx/.mdd 文件到此处</p>
+                        <p class="text-sm">或</p>
+                        <label class="mt-2 inline-block px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700">
+                            选择文件
+                            <input type="file" class="hidden" accept=".mdx,.mdd" @change="handleFileSelect($event)">
+                        </label>
+                    </div>
+                    <div x-show="uploading" class="mt-4">
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full transition-all" :style="`width: ${uploadProgress}%`"></div>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-2">上传中...</p>
+                    </div>
+                </div>
+
+                <!-- Dictionary List -->
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">状态</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">文件名</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">标题</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">大小</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">词条数</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            <template x-for="dict in dicts" :key="dict.id">
+                                <tr>
+                                    <td class="px-4 py-3">
+                                        <button
+                                            @click="toggleDictStatus(dict)"
+                                            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
+                                            :class="dict.is_enabled ? 'bg-blue-600' : 'bg-gray-200'"
+                                        >
+                                            <span
+                                                class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
+                                                :class="dict.is_enabled ? 'translate-x-6' : 'translate-x-1'"
+                                            ></span>
+                                        </button>
+                                    </td>
+                                    <td class="px-4 py-3 text-sm text-gray-900" x-text="dict.filename"></td>
+                                    <td class="px-4 py-3 text-sm text-gray-600" x-text="dict.title || '-'"></td>
+                                    <td class="px-4 py-3 text-sm text-gray-600" x-text="formatSize(dict.file_size)"></td>
+                                    <td class="px-4 py-3 text-sm text-gray-600" x-text="dict.entry_count.toLocaleString()"></td>
+                                    <td class="px-4 py-3">
+                                        <button
+                                            @click="deleteDict(dict)"
+                                            class="text-red-600 hover:text-red-800 text-sm"
+                                        >
+                                            删除
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- User Management -->
+            <section class="bg-white rounded-lg shadow-sm p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">👥 用户管理</h2>
+                    <button
+                        @click="showCreateUser = true"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                        + 新建用户
+                    </button>
+                </div>
+
+                <!-- User List -->
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">用户名</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">权限</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">API Token</th>
+                                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            <template x-for="u in users" :key="u.id">
+                                <tr>
+                                    <td class="px-4 py-3 text-sm text-gray-900" x-text="u.username"></td>
+                                    <td class="px-4 py-3">
+                                        <div class="flex flex-wrap gap-2">
+                                            <span x-show="u.permissions.can_use_api" class="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">API</span>
+                                            <span x-show="u.permissions.is_dict_admin" class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">词典管理</span>
+                                            <span x-show="u.permissions.is_user_admin" class="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded">用户管理</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3">
+                                        <div class="flex items-center space-x-2">
+                                            <code class="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded" x-text="u.api_token ? u.api_token.substring(0, 20) + '...' : '-'"></code>
+                                            <button
+                                                @click="copyToken(u.api_token)"
+                                                class="text-blue-600 hover:text-blue-800 text-xs"
+                                                x-show="u.api_token"
+                                            >
+                                                复制
+                                            </button>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3">
+                                        <div class="flex space-x-2">
+                                            <button
+                                                @click="resetToken(u)"
+                                                class="text-blue-600 hover:text-blue-800 text-sm"
+                                            >
+                                                重置Token
+                                            </button>
+                                            <button
+                                                @click="deleteUser(u)"
+                                                class="text-red-600 hover:text-red-800 text-sm"
+                                                x-show="!u.permissions.is_user_admin"
+                                            >
+                                                删除
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Create User Modal -->
+    <div x-show="showCreateUser" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-6">新建用户</h2>
+            <form @submit.prevent="createUser()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+                    <input
+                        type="text"
+                        x-model="newUser.username"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">密码（留空自动生成）</label>
+                    <input
+                        type="password"
+                        x-model="newUser.password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">权限</label>
+                    <div class="space-y-2">
+                        <label class="flex items-center">
+                            <input type="checkbox" x-model="newUser.can_use_api" class="rounded text-blue-600">
+                            <span class="ml-2 text-sm text-gray-700">允许 API 访问</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" x-model="newUser.is_dict_admin" class="rounded text-blue-600">
+                            <span class="ml-2 text-sm text-gray-700">词典管理员</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" x-model="newUser.is_user_admin" class="rounded text-blue-600">
+                            <span class="ml-2 text-sm text-gray-700">用户管理员</span>
+                        </label>
+                    </div>
+                </div>
+                <div x-show="createUserError" class="mb-4 text-red-600 text-sm" x-text="createUserError"></div>
+                <div class="flex justify-end space-x-4">
+                    <button
+                        type="button"
+                        @click="showCreateUser = false"
+                        class="px-4 py-2 text-gray-600 hover:text-gray-800"
+                    >
+                        取消
+                    </button>
+                    <button
+                        type="submit"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                        创建
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div x-show="showLogin" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-6">登录</h2>
+            <form @submit.prevent="login()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+                    <input
+                        type="text"
+                        x-model="loginForm.username"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
+                    <input
+                        type="password"
+                        x-model="loginForm.password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div x-show="loginError" class="mb-4 text-red-600 text-sm" x-text="loginError"></div>
+                <div class="flex justify-end space-x-4">
+                    <button
+                        type="button"
+                        @click="showLogin = false"
+                        class="px-4 py-2 text-gray-600 hover:text-gray-800"
+                    >
+                        取消
+                    </button>
+                    <button
+                        type="submit"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                        登录
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Created User Modal -->
+    <div x-show="showCreatedUser" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-4">用户创建成功</h2>
+            <div class="mb-4">
+                <p class="text-sm text-gray-600 mb-2">用户名：</p>
+                <code class="block bg-gray-100 p-2 rounded" x-text="createdUser?.username"></code>
+            </div>
+            <div class="mb-4" x-show="createdUser?.password">
+                <p class="text-sm text-gray-600 mb-2">密码（请妥善保存）：</p>
+                <code class="block bg-gray-100 p-2 rounded" x-text="createdUser?.password"></code>
+            </div>
+            <div class="mb-6">
+                <p class="text-sm text-gray-600 mb-2">API Token：</p>
+                <div class="flex items-center space-x-2">
+                    <code class="block bg-gray-100 p-2 rounded flex-1 break-all" x-text="createdUser?.api_token"></code>
+                    <button @click="copyToken(createdUser?.api_token)" class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap">
+                        复制
+                    </button>
+                </div>
+            </div>
+            <div class="flex justify-end">
+                <button
+                    @click="showCreatedUser = false"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                    确定
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function adminApp() {
+            return {
+                user: null,
+                token: null,
+                dicts: [],
+                users: [],
+                loading: true,
+                showLogin: false,
+                showCreateUser: false,
+                showCreatedUser: false,
+                createdUser: null,
+                loginForm: { username: '', password: '' },
+                loginError: null,
+                newUser: {
+                    username: '',
+                    password: '',
+                    can_use_api: true,
+                    is_dict_admin: false,
+                    is_user_admin: false
+                },
+                createUserError: null,
+                uploading: false,
+                uploadProgress: 0,
+                dragover: false,
+
+                async init() {
+                    // Check for saved token
+                    this.token = localStorage.getItem('token');
+                    if (this.token) {
+                        try {
+                            const userStr = localStorage.getItem('user');
+                            if (userStr) {
+                                this.user = JSON.parse(userStr);
+                            }
+                        } catch (e) {
+                            this.token = null;
+                        }
+                    }
+
+                    this.loading = false;
+
+                    if (this.user) {
+                        await this.loadData();
+                    }
+                },
+
+                async loadData() {
+                    await Promise.all([
+                        this.loadDicts(),
+                        this.loadUsers()
+                    ]);
+                },
+
+                async loadDicts() {
+                    try {
+                        const response = await this.fetchWithAuth('/api/v1/dicts');
+                        if (response.code === 0) {
+                            this.dicts = response.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to load dictionaries:', e);
+                    }
+                },
+
+                async loadUsers() {
+                    try {
+                        const response = await this.fetchWithAuth('/api/v1/users');
+                        if (response.code === 0) {
+                            this.users = response.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to load users:', e);
+                    }
+                },
+
+                async toggleDictStatus(dict) {
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/dicts/${dict.id}/status`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ is_enabled: !dict.is_enabled })
+                        });
+
+                        if (response.code === 0) {
+                            dict.is_enabled = !dict.is_enabled;
+                        }
+                    } catch (e) {
+                        console.error('Failed to toggle dict status:', e);
+                    }
+                },
+
+                async deleteDict(dict) {
+                    if (!confirm(`确定要删除词典 "${dict.filename}" 吗？`)) return;
+
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/dicts/${dict.id}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (response.code === 0) {
+                            this.dicts = this.dicts.filter(d => d.id !== dict.id);
+                        }
+                    } catch (e) {
+                        console.error('Failed to delete dict:', e);
+                    }
+                },
+
+                handleDrop(event) {
+                    this.dragover = false;
+                    const files = event.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.uploadFile(files[0]);
+                    }
+                },
+
+                handleFileSelect(event) {
+                    const files = event.target.files;
+                    if (files.length > 0) {
+                        this.uploadFile(files[0]);
+                    }
+                },
+
+                async uploadFile(file) {
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    if (ext !== 'mdx' && ext !== 'mdd') {
+                        alert('只支持 .mdx 和 .mdd 文件');
+                        return;
+                    }
+
+                    this.uploading = true;
+                    this.uploadProgress = 0;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    try {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/api/v1/dicts/upload');
+                        xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+
+                        xhr.upload.onprogress = (e) => {
+                            if (e.lengthComputable) {
+                                this.uploadProgress = (e.loaded / e.total) * 100;
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            this.uploading = false;
+                            this.uploadProgress = 0;
+
+                            if (xhr.status === 200) {
+                                const response = JSON.parse(xhr.responseText);
+                                if (response.code === 0) {
+                                    this.loadDicts();
+                                } else {
+                                    alert(response.message || '上传失败');
+                                }
+                            } else {
+                                alert('上传失败');
+                            }
+                        };
+
+                        xhr.onerror = () => {
+                            this.uploading = false;
+                            this.uploadProgress = 0;
+                            alert('上传失败');
+                        };
+
+                        xhr.send(formData);
+                    } catch (e) {
+                        this.uploading = false;
+                        this.uploadProgress = 0;
+                        console.error('Upload failed:', e);
+                    }
+                },
+
+                async createUser() {
+                    this.createUserError = null;
+
+                    try {
+                        const response = await this.fetchWithAuth('/api/v1/users', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                username: this.newUser.username,
+                                password: this.newUser.password || undefined,
+                                permissions: {
+                                    can_use_api: this.newUser.can_use_api,
+                                    is_dict_admin: this.newUser.is_dict_admin,
+                                    is_user_admin: this.newUser.is_user_admin
+                                }
+                            })
+                        });
+
+                        if (response.code === 0) {
+                            this.createdUser = response.data;
+                            this.showCreateUser = false;
+                            this.showCreatedUser = true;
+                            this.newUser = {
+                                username: '',
+                                password: '',
+                                can_use_api: true,
+                                is_dict_admin: false,
+                                is_user_admin: false
+                            };
+                            await this.loadUsers();
+                        } else {
+                            this.createUserError = response.message || '创建失败';
+                        }
+                    } catch (e) {
+                        this.createUserError = '网络错误，请重试';
+                    }
+                },
+
+                async deleteUser(user) {
+                    if (!confirm(`确定要删除用户 "${user.username}" 吗？`)) return;
+
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/users/${user.id}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (response.code === 0) {
+                            this.users = this.users.filter(u => u.id !== user.id);
+                        } else {
+                            alert(response.message || '删除失败');
+                        }
+                    } catch (e) {
+                        console.error('Failed to delete user:', e);
+                    }
+                },
+
+                async resetToken(user) {
+                    if (!confirm(`确定要重置用户 "${user.username}" 的 API Token 吗？`)) return;
+
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/users/${user.id}/reset-token`, {
+                            method: 'POST'
+                        });
+
+                        if (response.code === 0) {
+                            user.api_token = response.data.api_token;
+                            alert('Token 已重置，请复制保存');
+                        } else {
+                            alert(response.message || '重置失败');
+                        }
+                    } catch (e) {
+                        console.error('Failed to reset token:', e);
+                    }
+                },
+
+                copyToken(token) {
+                    if (!token) return;
+                    navigator.clipboard.writeText(token).then(() => {
+                        alert('Token 已复制到剪贴板');
+                    }).catch(() => {
+                        // Fallback for older browsers
+                        const textarea = document.createElement('textarea');
+                        textarea.value = token;
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                        alert('Token 已复制到剪贴板');
+                    });
+                },
+
+                formatSize(bytes) {
+                    if (bytes === 0) return '0 B';
+                    const k = 1024;
+                    const sizes = ['B', 'KB', 'MB', 'GB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+
+                async login() {
+                    this.loginError = null;
+
+                    try {
+                        const response = await fetch('/api/v1/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.loginForm)
+                        });
+
+                        const data = await response.json();
+
+                        if (data.code === 0) {
+                            this.token = data.data.access_token;
+                            this.user = data.data.user;
+
+                            localStorage.setItem('token', this.token);
+                            localStorage.setItem('refresh_token', data.data.refresh_token);
+                            localStorage.setItem('user', JSON.stringify(this.user));
+
+                            this.showLogin = false;
+                            this.loginForm = { username: '', password: '' };
+
+                            await this.loadData();
+                        } else {
+                            this.loginError = data.message || '登录失败';
+                        }
+                    } catch (e) {
+                        this.loginError = '网络错误，请重试';
+                    }
+                },
+
+                logout() {
+                    this.token = null;
+                    this.user = null;
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('refresh_token');
+                    localStorage.removeItem('user');
+                    this.dicts = [];
+                    this.users = [];
+                },
+
+                async fetchWithAuth(url, options = {}) {
+                    const headers = {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    };
+
+                    if (this.token) {
+                        headers['Authorization'] = `Bearer ${this.token}`;
+                    }
+
+                    const response = await fetch(url, {
+                        ...options,
+                        headers
+                    });
+
+                    if (response.status === 401 && this.token) {
+                        this.logout();
+                        this.showLogin = true;
+                        return { code: 40101, message: 'Session expired' };
+                    }
+
+                    return response.json();
+                }
+            }
+        }
+    </script>
+</body>
+</html>

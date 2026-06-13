@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mdict Server - 词典查询</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <h1 class="text-2xl font-bold text-gray-900">📚 Mdict Server</h1>
+                <span class="text-sm text-gray-500">词典查询</span>
+            </div>
+            <div class="flex items-center space-x-4">
+                <template x-if="user">
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm text-gray-600" x-text="user.username"></span>
+                        <a href="/admin" class="text-sm text-blue-600 hover:text-blue-800">管理后台</a>
+                        <button @click="logout()" class="text-sm text-gray-600 hover:text-gray-800">登出</button>
+                    </div>
+                </template>
+                <template x-if="!user">
+                    <button @click="showLogin = true" class="text-sm text-blue-600 hover:text-blue-800">登录</button>
+                </template>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-4xl mx-auto px-4 py-8">
+        <!-- Search Section -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex flex-col sm:flex-row gap-4">
+                <!-- Dictionary Selector -->
+                <select x-model="selectedDict" class="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <option value="">所有词典</option>
+                    <template x-for="dict in dicts" :key="dict.id">
+                        <option :value="dict.id" x-text="dict.title || dict.filename"></option>
+                    </template>
+                </select>
+
+                <!-- Search Input -->
+                <div class="flex-1 relative">
+                    <input
+                        type="text"
+                        x-model="searchWord"
+                        @keyup.enter="search()"
+                        @input="debouncedFuzzySearch()"
+                        placeholder="输入要查询的单词..."
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
+                    >
+                    <!-- Fuzzy suggestions -->
+                    <div
+                        x-show="suggestions.length > 0 && searchWord.length >= 2"
+                        x-cloak
+                        class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto"
+                    >
+                        <template x-for="item in suggestions" :key="item.word + item.dict_id">
+                            <button
+                                @click="selectSuggestion(item.word)"
+                                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center justify-between"
+                            >
+                                <span x-text="item.word"></span>
+                                <span class="text-xs text-gray-400" x-text="item.dict_name"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Search Button -->
+                <button
+                    @click="search()"
+                    class="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+                >
+                    查询
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div x-show="loading" x-cloak class="text-center py-8">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+            <p class="mt-2 text-gray-600">查询中...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div x-show="error" x-cloak class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <p class="text-red-600" x-text="error"></p>
+        </div>
+
+        <!-- Search Results -->
+        <div x-show="results.length > 0" x-cloak>
+            <template x-for="(result, index) in results" :key="index">
+                <div class="bg-white rounded-lg shadow-sm p-6 mb-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-gray-900" x-text="result.dict_name"></h3>
+                        <span class="text-sm text-gray-500" x-text="result.dict_id"></span>
+                    </div>
+                    <div class="prose max-w-none" x-html="sanitizeHtml(result.html)"></div>
+                    <div x-show="result.has_audio" class="mt-4">
+                        <button
+                            @click="playAudio(result.audio_url)"
+                            class="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                        >
+                            🔊 播放发音
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- No Results -->
+        <div x-show="searched && results.length === 0 && !loading && !error" x-cloak class="text-center py-12">
+            <p class="text-gray-500 text-lg">未找到匹配的结果</p>
+        </div>
+    </main>
+
+    <!-- Login Modal -->
+    <div x-show="showLogin" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-6">登录</h2>
+            <form @submit.prevent="login()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+                    <input
+                        type="text"
+                        x-model="loginForm.username"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
+                    <input
+                        type="password"
+                        x-model="loginForm.password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div x-show="loginError" class="mb-4 text-red-600 text-sm" x-text="loginError"></div>
+                <div class="flex justify-end space-x-4">
+                    <button
+                        type="button"
+                        @click="showLogin = false"
+                        class="px-4 py-2 text-gray-600 hover:text-gray-800"
+                    >
+                        取消
+                    </button>
+                    <button
+                        type="submit"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                    >
+                        登录
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Audio Player (hidden) -->
+    <audio x-ref="audioPlayer" class="hidden"></audio>
+
+    <script>
+        function app() {
+            return {
+                dicts: [],
+                selectedDict: '',
+                searchWord: '',
+                results: [],
+                suggestions: [],
+                loading: false,
+                searched: false,
+                error: null,
+                user: null,
+                token: null,
+                showLogin: false,
+                loginForm: {
+                    username: '',
+                    password: ''
+                },
+                loginError: null,
+                fuzzySearchTimeout: null,
+
+                async init() {
+                    // Check for saved token
+                    this.token = localStorage.getItem('token');
+                    if (this.token) {
+                        try {
+                            const userStr = localStorage.getItem('user');
+                            if (userStr) {
+                                this.user = JSON.parse(userStr);
+                            }
+                        } catch (e) {
+                            this.token = null;
+                        }
+                    }
+
+                    // Load dictionaries
+                    await this.loadDicts();
+                },
+
+                async loadDicts() {
+                    try {
+                        const response = await this.fetchWithAuth('/api/v1/dicts');
+                        if (response.code === 0) {
+                            this.dicts = response.data.filter(d => d.is_enabled);
+                        }
+                    } catch (e) {
+                        console.error('Failed to load dictionaries:', e);
+                    }
+                },
+
+                async search() {
+                    if (!this.searchWord.trim()) return;
+
+                    this.loading = true;
+                    this.error = null;
+                    this.results = [];
+                    this.suggestions = [];
+                    this.searched = true;
+
+                    try {
+                        const params = new URLSearchParams({ word: this.searchWord.trim() });
+                        if (this.selectedDict) {
+                            params.append('dict_id', this.selectedDict);
+                        }
+
+                        const response = await this.fetchWithAuth(`/api/v1/search?${params}`);
+
+                        if (response.code === 0) {
+                            this.results = response.data.results || [];
+                        } else if (response.code === 40401) {
+                            this.results = [];
+                        } else {
+                            this.error = response.message || '查询失败';
+                        }
+                    } catch (e) {
+                        this.error = '网络错误，请重试';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                debouncedFuzzySearch() {
+                    if (this.fuzzySearchTimeout) {
+                        clearTimeout(this.fuzzySearchTimeout);
+                    }
+
+                    if (this.searchWord.length < 2) {
+                        this.suggestions = [];
+                        return;
+                    }
+
+                    this.fuzzySearchTimeout = setTimeout(() => {
+                        this.fuzzySearch();
+                    }, 300);
+                },
+
+                async fuzzySearch() {
+                    try {
+                        const params = new URLSearchParams({
+                            keyword: this.searchWord,
+                            page_size: '10'
+                        });
+                        if (this.selectedDict) {
+                            params.append('dict_id', this.selectedDict);
+                        }
+
+                        const response = await this.fetchWithAuth(`/api/v1/search/fuzzy?${params}`);
+
+                        if (response.code === 0) {
+                            this.suggestions = response.data.items || [];
+                        }
+                    } catch (e) {
+                        console.error('Fuzzy search failed:', e);
+                    }
+                },
+
+                selectSuggestion(word) {
+                    this.searchWord = word;
+                    this.suggestions = [];
+                    this.search();
+                },
+
+                sanitizeHtml(html) {
+                    if (!html) return '';
+                    return DOMPurify.sanitize(html, {
+                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote'],
+                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face']
+                    });
+                },
+
+                playAudio(url) {
+                    if (url && this.$refs.audioPlayer) {
+                        this.$refs.audioPlayer.src = url;
+                        this.$refs.audioPlayer.play();
+                    }
+                },
+
+                async login() {
+                    this.loginError = null;
+
+                    try {
+                        const response = await fetch('/api/v1/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.loginForm)
+                        });
+
+                        const data = await response.json();
+
+                        if (data.code === 0) {
+                            this.token = data.data.access_token;
+                            this.user = data.data.user;
+
+                            localStorage.setItem('token', this.token);
+                            localStorage.setItem('refresh_token', data.data.refresh_token);
+                            localStorage.setItem('user', JSON.stringify(this.user));
+
+                            this.showLogin = false;
+                            this.loginForm = { username: '', password: '' };
+
+                            // Reload dictionaries
+                            await this.loadDicts();
+                        } else {
+                            this.loginError = data.message || '登录失败';
+                        }
+                    } catch (e) {
+                        this.loginError = '网络错误，请重试';
+                    }
+                },
+
+                logout() {
+                    this.token = null;
+                    this.user = null;
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('refresh_token');
+                    localStorage.removeItem('user');
+                },
+
+                async fetchWithAuth(url, options = {}) {
+                    const headers = {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    };
+
+                    if (this.token) {
+                        headers['Authorization'] = `Bearer ${this.token}`;
+                    }
+
+                    const response = await fetch(url, {
+                        ...options,
+                        headers
+                    });
+
+                    // Handle token expiration
+                    if (response.status === 401 && this.token) {
+                        // Try to refresh token
+                        const refreshed = await this.refreshToken();
+                        if (refreshed) {
+                            headers['Authorization'] = `Bearer ${this.token}`;
+                            return fetch(url, { ...options, headers }).then(r => r.json());
+                        } else {
+                            this.logout();
+                        }
+                    }
+
+                    return response.json();
+                },
+
+                async refreshToken() {
+                    try {
+                        const refreshToken = localStorage.getItem('refresh_token');
+                        if (!refreshToken) return false;
+
+                        const response = await fetch('/api/v1/auth/refresh', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ refresh_token: refreshToken })
+                        });
+
+                        const data = await response.json();
+                        if (data.code === 0) {
+                            this.token = data.data.access_token;
+                            localStorage.setItem('token', this.token);
+                            return true;
+                        }
+                    } catch (e) {
+                        console.error('Token refresh failed:', e);
+                    }
+                    return false;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
