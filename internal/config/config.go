@@ -2,8 +2,9 @@ package config
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -75,18 +76,18 @@ func Load() (*Config, error) {
 	cfg.AdminPass = getEnv("ADMIN_PASS", "")
 
 	if cfg.AdminUser == "" {
-		cfg.AdminUser = generateRandomString(8)
+		cfg.AdminUser = generateRandomUsername()
 		log.Info().Str("username", cfg.AdminUser).Msg("Generated admin username")
 	}
 
 	if cfg.AdminPass == "" {
-		cfg.AdminPass = generateRandomString(16)
+		cfg.AdminPass = generateRandomPassword(16)
 		log.Info().Str("password", cfg.AdminPass).Msg("Generated admin password")
 	}
 
 	// Generate JWT secret if not provided
 	if cfg.JWTSecret == "" {
-		cfg.JWTSecret = generateRandomString(32)
+		cfg.JWTSecret = generateBase64Secret(32)
 		log.Info().Msg("Generated JWT secret key")
 	}
 
@@ -202,12 +203,75 @@ func getEnvSlice(key string, defaultValue []string) []string {
 	return defaultValue
 }
 
-func generateRandomString(length int) string {
-	bytes := make([]byte, length/2+1)
-	if _, err := rand.Read(bytes); err != nil {
-		log.Fatal().Err(err).Msg("Failed to generate random string")
+// generateRandomUsername generates a random admin username: "admin_" + 4 lowercase alphanumeric chars.
+func generateRandomUsername() string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	suffix := make([]byte, 4)
+	for i := range suffix {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to generate random username")
+		}
+		suffix[i] = chars[n.Int64()]
 	}
-	return hex.EncodeToString(bytes)[:length]
+	return "admin_" + string(suffix)
+}
+
+// generateRandomPassword generates a random password with guaranteed character diversity.
+// Ensures at least one uppercase, one lowercase, one digit, and one special character.
+func generateRandomPassword(length int) string {
+	if length < 4 {
+		length = 4
+	}
+
+	const (
+		lower   = "abcdefghijklmnopqrstuvwxyz"
+		upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		digits  = "0123456789"
+		special = "!@#$%^&*"
+	)
+	all := lower + upper + digits + special
+
+	// Pick one from each required category
+	categories := []string{lower, upper, digits, special}
+	result := make([]byte, length)
+	for i, cat := range categories {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(cat))))
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to generate random password")
+		}
+		result[i] = cat[n.Int64()]
+	}
+
+	// Fill the rest from the full charset
+	for i := len(categories); i < length; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(all))))
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to generate random password")
+		}
+		result[i] = all[n.Int64()]
+	}
+
+	// Shuffle to avoid predictable positions
+	for i := len(result) - 1; i > 0; i-- {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to shuffle password")
+		}
+		j := int(n.Int64())
+		result[i], result[j] = result[j], result[i]
+	}
+
+	return string(result)
+}
+
+// generateBase64Secret generates a random byte sequence and returns it as Base64.
+func generateBase64Secret(byteLength int) string {
+	bytes := make([]byte, byteLength)
+	if _, err := rand.Read(bytes); err != nil {
+		log.Fatal().Err(err).Msg("Failed to generate random secret")
+	}
+	return base64.StdEncoding.EncodeToString(bytes)
 }
 
 func ensureDir(path string) error {

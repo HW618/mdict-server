@@ -297,17 +297,33 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 
 		// Use fuzzy store for search (limit to get enough results for pagination)
 		hits, err := dict.fuzzyStore.Search(dict.dictName, keyword, 1000)
-		if err != nil {
-			log.Warn().Err(err).Str("dict", id).Msg("Fuzzy search failed")
-			continue
-		}
-
-		for _, hit := range hits {
-			matches = append(matches, wordMatch{
-				word:     hit.Entry.Keyword,
-				dictID:   id,
-				dictName: dict.Info.Title,
-			})
+		if err != nil || len(hits) == 0 {
+			// Fallback: prefix-match scan from exported entries
+			if err != nil {
+				log.Warn().Err(err).Str("dict", id).Str("keyword", keyword).Msg("Fuzzy store miss, using prefix fallback")
+			}
+			entries, exportErr := dict.mdxDict.ExportEntries()
+			if exportErr != nil {
+				log.Warn().Err(exportErr).Str("dict", id).Msg("Failed to export entries for fallback")
+				continue
+			}
+			for _, entry := range entries {
+				if strings.HasPrefix(strings.ToLower(entry.Keyword), keyword) {
+					matches = append(matches, wordMatch{
+						word:     entry.Keyword,
+						dictID:   id,
+						dictName: dict.Info.Title,
+					})
+				}
+			}
+		} else {
+			for _, hit := range hits {
+				matches = append(matches, wordMatch{
+					word:     hit.Entry.Keyword,
+					dictID:   id,
+					dictName: dict.Info.Title,
+				})
+			}
 		}
 	}
 
