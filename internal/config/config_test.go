@@ -142,9 +142,6 @@ func TestParseSizeString(t *testing.T) {
 func TestGenerateRandomUsername(t *testing.T) {
 	username := generateRandomUsername()
 
-	if len(username) != 14 { // "admin_" (6) + 4 random + possible prefix
-		// Actually it's "admin_" + 4 chars = 10
-	}
 	if len(username) != 10 {
 		t.Errorf("expected username length 10, got %d: '%s'", len(username), username)
 	}

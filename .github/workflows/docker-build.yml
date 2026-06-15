@@ -22,9 +22,10 @@ jobs:
         run: go test ./...
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
+          args: --out-format=colored-line-number
 
   build:
     needs: test
