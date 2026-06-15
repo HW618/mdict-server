@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+/server
 
 # Test binary, built with `go test -c`
 *.test
@@ -27,6 +28,17 @@ go.work.sum
 # env file
 .env
 
+# Data directories
+/data/
+/dicts/*.mdx
+/dicts/*.mdd
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+tests/
