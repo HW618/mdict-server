@@ -37,6 +37,27 @@ func NewRateLimiter(rate int, interval time.Duration) *RateLimiter {
 	return rl
 }
 
+// LoginRateLimit returns a strict rate limiter for login endpoints (5 req/min/IP).
+func LoginRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(5, time.Minute)
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+
+		if !limiter.Allow(ip) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"code":    42901,
+				"message": "Login attempt rate limit exceeded",
+				"data":    nil,
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 // RateLimit returns a rate limiting middleware
 func RateLimit(rate int) gin.HandlerFunc {
 	if rate <= 0 {

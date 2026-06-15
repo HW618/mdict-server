@@ -129,6 +129,14 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
+	log.Info().
+		Str("audit", "true").
+		Str("action", "user_created").
+		Str("target_user_id", user.ID).
+		Str("target_username", user.Username).
+		Str("operator_id", c.GetString("userID")).
+		Msg("User created")
+
 	// Return response with password (only on creation)
 	response := user.ToResponse()
 	c.JSON(http.StatusCreated, gin.H{
@@ -184,6 +192,14 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		})
 		return
 	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "user_deleted").
+		Str("target_user_id", userID).
+		Str("target_username", user.Username).
+		Str("operator_id", c.GetString("userID")).
+		Msg("User deleted")
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
@@ -264,6 +280,16 @@ func (h *UserHandler) UpdatePermissions(c *gin.Context) {
 		return
 	}
 
+	log.Info().
+		Str("audit", "true").
+		Str("action", "permissions_updated").
+		Str("target_user_id", userID).
+		Bool("can_use_api", req.CanUseAPI).
+		Bool("is_dict_admin", req.IsDictAdmin).
+		Bool("is_user_admin", req.IsUserAdmin).
+		Str("operator_id", c.GetString("userID")).
+		Msg("User permissions updated")
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "Permissions updated",
@@ -299,6 +325,13 @@ func (h *UserHandler) ResetToken(c *gin.Context) {
 		return
 	}
 
+	log.Info().
+		Str("audit", "true").
+		Str("action", "api_token_reset").
+		Str("target_user_id", userID).
+		Str("operator_id", c.GetString("userID")).
+		Msg("API token reset")
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "API token reset successfully",
@@ -308,16 +341,48 @@ func (h *UserHandler) ResetToken(c *gin.Context) {
 	})
 }
 
-// generateRandomPassword generates a cryptographically secure random password.
-// Returns an error if the crypto/rand source fails.
+// generateRandomPassword generates a cryptographically secure random password
+// with guaranteed character diversity (at least one lowercase, uppercase, digit, special).
 func generateRandomPassword(length int) (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random password: %w", err)
+	if length < 8 {
+		length = 8
 	}
-	for i := range b {
-		b[i] = charset[int(b[i])%len(charset)]
+
+	const (
+		lower   = "abcdefghijklmnopqrstuvwxyz"
+		upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		digits  = "0123456789"
+		special = "!@#$%^&*"
+	)
+	all := lower + upper + digits + special
+
+	// Pick one from each required category
+	categories := []string{lower, upper, digits, special}
+	result := make([]byte, length)
+	buf := make([]byte, 1)
+	for i, cat := range categories {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("failed to generate random password: %w", err)
+		}
+		result[i] = cat[int(buf[0])%len(cat)]
 	}
-	return string(b), nil
+
+	// Fill the rest from the full charset
+	for i := len(categories); i < length; i++ {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("failed to generate random password: %w", err)
+		}
+		result[i] = all[int(buf[0])%len(all)]
+	}
+
+	// Shuffle to avoid predictable positions
+	for i := len(result) - 1; i > 0; i-- {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("failed to shuffle password: %w", err)
+		}
+		j := int(buf[0]) % (i + 1)
+		result[i], result[j] = result[j], result[i]
+	}
+
+	return string(result), nil
 }

@@ -105,6 +105,14 @@ func (h *DictHandler) UpdateStatus(c *gin.Context) {
 		h.engine.Unload(dictID)
 	}
 
+	log.Info().
+		Str("audit", "true").
+		Str("action", "dict_status_changed").
+		Str("dict_id", dictID).
+		Bool("is_enabled", req.IsEnabled).
+		Str("operator_id", c.GetString("userID")).
+		Msg("Dictionary status updated")
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "Dictionary status updated",
@@ -195,6 +203,14 @@ func (h *DictHandler) Upload(c *gin.Context) {
 			log.Error().Err(err).Msg("Failed to reload dictionaries")
 		}
 	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "dict_uploaded").
+		Str("filename", safeFilename).
+		Int64("file_size", file.Size).
+		Str("operator_id", c.GetString("userID")).
+		Msg("Dictionary file uploaded")
 
 	// Get file info
 	fileInfo, err := os.Stat(dst)
@@ -298,6 +314,14 @@ func (h *DictHandler) Delete(c *gin.Context) {
 		})
 		return
 	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "dict_deleted").
+		Str("dict_id", dictID).
+		Str("filename", dictInfo.Filename).
+		Str("operator_id", c.GetString("userID")).
+		Msg("Dictionary deleted")
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,

@@ -81,10 +81,19 @@ func (m *AuthMiddleware) RequireAPIAccess() gin.HandlerFunc {
 	}
 }
 
+// authenticateAny tries JWT first, then falls back to API token.
+func (m *AuthMiddleware) authenticateAny(c *gin.Context) (*models.User, error) {
+	user, err := m.authenticate(c)
+	if err == nil {
+		return user, nil
+	}
+	return m.authenticateWithAPIToken(c)
+}
+
 // RequireDictAdmin middleware requires dictionary admin permission
 func (m *AuthMiddleware) RequireDictAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		user, err := m.authenticate(c)
+		user, err := m.authenticateAny(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    40101,
@@ -116,7 +125,7 @@ func (m *AuthMiddleware) RequireDictAdmin() gin.HandlerFunc {
 // RequireUserAdmin middleware requires user admin permission
 func (m *AuthMiddleware) RequireUserAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		user, err := m.authenticate(c)
+		user, err := m.authenticateAny(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    40101,

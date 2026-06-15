@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	mdx "github.com/lib-x/mdx"
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/rs/zerolog/log"
 
 	"github.com/HW618/mdict-server/internal/models"
@@ -17,10 +18,11 @@ import (
 
 // Engine manages dictionary loading and querying
 type Engine struct {
-	mu        sync.RWMutex
-	dicts     map[string]*LoadedDict
-	dictDir   string
-	dictStore *store.DictStore
+	mu         sync.RWMutex
+	dicts      map[string]*LoadedDict
+	dictDir    string
+	dictStore  *store.DictStore
+	sanitizer  *bluemonday.Policy
 }
 
 // LoadedDict represents a loaded dictionary with its parsed data
@@ -34,10 +36,21 @@ type LoadedDict struct {
 
 // NewEngine creates a new dictionary engine
 func NewEngine(dictDir string, dictStore *store.DictStore) *Engine {
+	// Create a sanitization policy for dictionary HTML content.
+	// Allow common HTML tags used in dictionary definitions.
+	p := bluemonday.UGCPolicy()
+	p.AllowElements("div", "span", "p", "b", "i", "u", "a", "img", "audio", "source",
+		"br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
+		"table", "tr", "td", "th", "thead", "tbody", "font", "sup", "sub",
+		"blockquote", "pre", "code", "dl", "dt", "dd")
+	p.AllowAttrs("href", "src", "alt", "title", "class", "style", "width", "height",
+		"controls", "autoplay", "loop", "type", "color", "size", "face").Globally()
+
 	return &Engine{
 		dicts:     make(map[string]*LoadedDict),
 		dictDir:   dictDir,
 		dictStore: dictStore,
+		sanitizer: p,
 	}
 }
 
@@ -78,7 +91,38 @@ func (e *Engine) LoadAll() error {
 		loadedCount++
 	}
 
+	// Disable orphaned records: dicts in DB whose files no longer exist on disk
+	if err := e.disableOrphans(); err != nil {
+		log.Error().Err(err).Msg("Failed to check orphaned dictionaries")
+	}
+
 	log.Info().Int("count", loadedCount).Msg("Loaded dictionaries")
+	return nil
+}
+
+// disableOrphans marks DB records as disabled when the corresponding .mdx file no longer exists on disk.
+func (e *Engine) disableOrphans() error {
+	allDicts, err := e.dictStore.List()
+	if err != nil {
+		return err
+	}
+
+	for _, d := range allDicts {
+		if _, loaded := e.dicts[d.ID]; loaded {
+			continue
+		}
+		// Not loaded — check if file exists
+		mdxPath := filepath.Join(e.dictDir, d.Filename)
+		if _, err := os.Stat(mdxPath); os.IsNotExist(err) {
+			if d.IsEnabled {
+				if err := e.dictStore.UpdateStatus(d.ID, false); err != nil {
+					log.Error().Err(err).Str("id", d.ID).Str("filename", d.Filename).Msg("Failed to disable orphaned dictionary")
+				} else {
+					log.Warn().Str("id", d.ID).Str("filename", d.Filename).Msg("Disabled orphaned dictionary (file missing)")
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -242,6 +286,9 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 			continue
 		}
 
+		// Sanitize HTML output
+		cleanHTML := e.sanitizer.Sanitize(string(htmlBytes))
+
 		// Check for audio in MDD
 		hasAudio := false
 		audioURL := ""
@@ -256,7 +303,7 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 		result.Results = append(result.Results, models.DictResult{
 			DictID:   id,
 			DictName: dict.Info.Title,
-			HTML:     string(htmlBytes),
+			HTML:     cleanHTML,
 			HasAudio: hasAudio,
 			AudioURL: audioURL,
 		})

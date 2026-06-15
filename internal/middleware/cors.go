@@ -54,6 +54,15 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
 
+		// Content-Security-Policy: allow CDN resources used by templates
+		c.Header("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; "+
+				"style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "+
+				"img-src 'self' data: blob:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self';")
+
 		// Handle preflight request
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

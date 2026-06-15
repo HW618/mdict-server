@@ -98,7 +98,7 @@ func main() {
 	api := router.Group("/api/v1")
 	{
 		// Public routes
-		api.POST("/auth/login", authHandler.Login)
+		api.POST("/auth/login", middleware.LoginRateLimit(), authHandler.Login)
 		api.POST("/auth/refresh", authHandler.Refresh)
 		api.GET("/health", healthHandler.Health)
 		api.GET("/skill.json", skillHandler.GetSkill)

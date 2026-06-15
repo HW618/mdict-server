@@ -66,6 +66,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		log.Warn().
+			Str("audit", "true").
+			Str("action", "login_failed").
+			Str("username", req.Username).
+			Str("ip", c.ClientIP()).
+			Msg("Login failed: invalid password")
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    40104,
 			"message": "Invalid username or password",
@@ -108,6 +114,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 		return
 	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "login_success").
+		Str("user_id", user.ID).
+		Str("username", user.Username).
+		Str("ip", c.ClientIP()).
+		Msg("User logged in")
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
@@ -234,6 +248,14 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 			}
 		}
 	}
+
+	userID, _ := auth.GetUserIDFromContext(c)
+	log.Info().
+		Str("audit", "true").
+		Str("action", "logout").
+		Str("user_id", userID).
+		Str("ip", c.ClientIP()).
+		Msg("User logged out")
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
