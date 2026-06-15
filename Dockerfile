@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install build dependencies (gcc needed for CGO/mattn/go-sqlite3)
 RUN apk add --no-cache git gcc musl-dev ca-certificates tzdata
@@ -17,7 +17,8 @@ RUN go mod download
 COPY . .
 
 # Build static binary (CGO_ENABLED=1 needed for go-sqlite3)
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-w -s" \
     -o /app/mdict-server \
     ./cmd/server
