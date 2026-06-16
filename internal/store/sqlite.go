@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
@@ -15,6 +16,11 @@ type SQLiteStore struct {
 
 // NewSQLiteStore creates a new SQLite store
 func NewSQLiteStore(dataDir string) (*SQLiteStore, error) {
+	// Ensure the data directory exists and is writable
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
+	}
+
 	dbPath := filepath.Join(dataDir, "mdict.db")
 
 	db, err := sql.Open("sqlite3", dbPath)

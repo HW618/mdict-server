@@ -40,12 +40,42 @@
         <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
             <div class="flex flex-col sm:flex-row gap-4">
                 <!-- Dictionary Selector -->
-                <select x-model="selectedDict" class="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                    <option value="">所有词典</option>
-                    <template x-for="dict in dicts" :key="dict.id">
-                        <option :value="dict.id" x-text="dict.title || dict.filename"></option>
-                    </template>
-                </select>
+                <div class="relative flex-shrink-0 w-48" @click.away="dropdownOpen = false" @keydown.escape="dropdownOpen = false">
+                    <button
+                        type="button"
+                        @click="dropdownOpen = !dropdownOpen"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-left flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                        <span class="truncate" x-text="selectedDict ? (dicts.find(d => d.id === selectedDict)?.title || dicts.find(d => d.id === selectedDict)?.filename || '所有词典') : '所有词典'"></span>
+                        <svg class="w-4 h-4 text-gray-400 flex-shrink-0 ml-2" :class="{ 'rotate-180': dropdownOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div
+                        x-show="dropdownOpen"
+                        x-cloak
+                        x-transition:enter="transition ease-out duration-100"
+                        x-transition:enter-start="opacity-0 -translate-y-1"
+                        x-transition:enter-end="opacity-100 translate-y-0"
+                        x-transition:leave="transition ease-in duration-75"
+                        x-transition:leave-start="opacity-100 translate-y-0"
+                        x-transition:leave-end="opacity-0 -translate-y-1"
+                        class="absolute z-20 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto min-w-48"
+                        style="width: max-content; max-width: 24rem;"
+                    >
+                        <button
+                            @click="selectedDict = ''; dropdownOpen = false"
+                            class="w-full px-4 py-2 text-left hover:bg-blue-50 whitespace-nowrap"
+                            :class="selectedDict === '' ? 'text-blue-600 font-medium' : 'text-gray-700'"
+                        >所有词典</button>
+                        <template x-for="dict in dicts" :key="dict.id">
+                            <button
+                                @click="selectedDict = dict.id; dropdownOpen = false"
+                                class="w-full px-4 py-2 text-left hover:bg-blue-50 whitespace-nowrap"
+                                :class="selectedDict === dict.id ? 'text-blue-600 font-medium' : 'text-gray-700'"
+                                x-text="dict.title || dict.filename"
+                            ></button>
+                        </template>
+                    </div>
+                </div>
 
                 <!-- Search Input -->
                 <div class="flex-1 relative">
@@ -174,6 +204,7 @@
             return {
                 dicts: [],
                 selectedDict: '',
+                dropdownOpen: false,
                 searchWord: '',
                 results: [],
                 suggestions: [],

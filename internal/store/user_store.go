@@ -254,6 +254,22 @@ func (s *UserStore) UpdateAPIToken(id, token string) error {
 	return nil
 }
 
+// UpdatePassword updates user's password hash
+func (s *UserStore) UpdatePassword(id, hashedPassword string) error {
+	query := `
+		UPDATE users
+		SET password = ?, updated_at = ?
+		WHERE id = ?
+	`
+
+	_, err := s.store.db.Exec(query, hashedPassword, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	return nil
+}
+
 // Delete deletes a user
 func (s *UserStore) Delete(id string) error {
 	query := `DELETE FROM users WHERE id = ?`

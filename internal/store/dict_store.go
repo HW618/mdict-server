@@ -240,6 +240,22 @@ func (s *DictStore) UpdateStatus(id string, isEnabled bool) error {
 	return nil
 }
 
+// UpdateTitle updates dictionary title
+func (s *DictStore) UpdateTitle(id, title string) error {
+	query := `
+		UPDATE dicts
+		SET title = ?, updated_at = ?
+		WHERE id = ?
+	`
+
+	_, err := s.store.db.Exec(query, title, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update dictionary title: %w", err)
+	}
+
+	return nil
+}
+
 // Delete deletes a dictionary
 func (s *DictStore) Delete(id string) error {
 	query := `DELETE FROM dicts WHERE id = ?`

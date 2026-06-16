@@ -147,10 +147,9 @@ func (e *Engine) loadDict(filename string) error {
 
 	// Get metadata from the parsed dictionary
 	info := mdxDict.DictionaryInfo()
-	dictInfo.Title = info.Title
-	if dictInfo.Title == "" {
-		dictInfo.Title = strings.TrimSuffix(filename, ".mdx")
-	}
+	// Always use filename (without .mdx extension) as the initial title.
+	// Users can change it later in the admin UI.
+	dictInfo.Title = strings.TrimSuffix(filename, filepath.Ext(filename))
 	dictInfo.Description = info.Description
 	dictInfo.EntryCount = info.EntryCount
 

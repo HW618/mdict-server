@@ -20,6 +20,7 @@
             </div>
             <div class="flex items-center space-x-4">
                 <span class="text-sm text-gray-600" x-text="user?.username || 'Admin'"></span>
+                <button @click="showChangePassword = true" class="text-sm text-blue-600 hover:text-blue-800">修改密码</button>
                 <a href="/" class="text-sm text-blue-600 hover:text-blue-800">返回查询</a>
                 <button @click="logout()" class="text-sm text-gray-600 hover:text-gray-800">登出</button>
             </div>
@@ -50,6 +51,7 @@
 
                 <!-- Upload Area -->
                 <div
+                    x-show="!uploading"
                     class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-6 hover:border-blue-400 transition-colors"
                     @dragover.prevent="dragover = true"
                     @dragleave.prevent="dragover = false"
@@ -64,12 +66,13 @@
                             <input type="file" class="hidden" accept=".mdx,.mdd" @change="handleFileSelect($event)">
                         </label>
                     </div>
-                    <div x-show="uploading" class="mt-4">
-                        <div class="w-full bg-gray-200 rounded-full h-2">
-                            <div class="bg-blue-600 h-2 rounded-full transition-all" :style="`width: ${uploadProgress}%`"></div>
-                        </div>
-                        <p class="text-sm text-gray-600 mt-2">上传中...</p>
+                </div>
+                <div x-show="uploading" x-cloak class="border-2 border-blue-200 bg-blue-50 rounded-lg p-6 mb-6">
+                    <p class="text-sm font-medium text-gray-700 mb-2" x-text="'上传中: ' + uploadFileName"></p>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div class="bg-blue-600 h-2.5 rounded-full transition-all" :style="`width: ${uploadProgress}%`"></div>
                     </div>
+                    <p class="text-sm text-gray-500 mt-2" x-text="uploadLoaded + ' / ' + uploadTotal"></p>
                 </div>
 
                 <!-- Dictionary List -->
@@ -101,7 +104,26 @@
                                         </button>
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-900" x-text="dict.filename"></td>
-                                    <td class="px-4 py-3 text-sm text-gray-600" x-text="dict.title || '-'"></td>
+                                    <td class="px-4 py-3 text-sm text-gray-600">
+                                        <template x-if="editingDictId !== dict.id">
+                                            <span
+                                                class="cursor-pointer hover:text-blue-600 border-b border-dashed border-transparent hover:border-blue-600"
+                                                @click="startEditTitle(dict)"
+                                                x-text="dict.title || '-'"
+                                            ></span>
+                                        </template>
+                                        <template x-if="editingDictId === dict.id">
+                                            <input
+                                                type="text"
+                                                x-model="editingTitle"
+                                                @keydown.enter="saveTitle(dict)"
+                                                @keydown.escape="cancelEditTitle()"
+                                                @blur="saveTitle(dict)"
+                                                class="w-full px-2 py-1 border border-blue-400 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                                x-ref="titleInput"
+                                            >
+                                        </template>
+                                    </td>
                                     <td class="px-4 py-3 text-sm text-gray-600" x-text="formatSize(dict.file_size)"></td>
                                     <td class="px-4 py-3 text-sm text-gray-600" x-text="dict.entry_count.toLocaleString()"></td>
                                     <td class="px-4 py-3">
@@ -166,9 +188,15 @@
                                         </div>
                                     </td>
                                     <td class="px-4 py-3">
-                                        <div class="flex space-x-2">
-                                            <button
-                                                @click="resetToken(u)"
+                                    <div class="flex space-x-2">
+                                        <button
+                                            @click="openResetPassword(u)"
+                                            class="text-blue-600 hover:text-blue-800 text-sm"
+                                        >
+                                            修改密码
+                                        </button>
+                                        <button
+                                            @click="resetToken(u)"
                                                 class="text-blue-600 hover:text-blue-800 text-sm"
                                             >
                                                 重置Token
@@ -325,6 +353,82 @@
         </div>
     </div>
 
+    <!-- Change Password Modal (current user) -->
+    <div x-show="showChangePassword" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-6">修改密码</h2>
+            <form @submit.prevent="changePassword()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">旧密码</label>
+                    <input
+                        type="password"
+                        x-model="changePasswordForm.old_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">新密码</label>
+                    <input
+                        type="password"
+                        x-model="changePasswordForm.new_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                        minlength="6"
+                    >
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
+                    <input
+                        type="password"
+                        x-model="changePasswordForm.confirm_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div x-show="changePasswordError" class="mb-4 text-red-600 text-sm" x-text="changePasswordError"></div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" @click="showChangePassword = false" class="px-4 py-2 text-gray-600 hover:text-gray-800">取消</button>
+                    <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">确认修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Reset Password Modal -->
+    <div x-show="showAdminResetPassword" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-2">重置密码</h2>
+            <p class="text-sm text-gray-500 mb-6">为用户 <span class="font-medium text-gray-700" x-text="adminResetUser?.username"></span> 设置新密码</p>
+            <form @submit.prevent="adminResetPassword()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">新密码</label>
+                    <input
+                        type="password"
+                        x-model="adminResetForm.new_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                        minlength="6"
+                    >
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">确认新密码</label>
+                    <input
+                        type="password"
+                        x-model="adminResetForm.confirm_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                    >
+                </div>
+                <div x-show="adminResetError" class="mb-4 text-red-600 text-sm" x-text="adminResetError"></div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" @click="showAdminResetPassword = false" class="px-4 py-2 text-gray-600 hover:text-gray-800">取消</button>
+                    <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">确认重置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         function adminApp() {
             return {
@@ -350,6 +454,18 @@
                 uploading: false,
                 uploadProgress: 0,
                 dragover: false,
+                uploadFileName: '',
+                uploadLoaded: '',
+                uploadTotal: '',
+                showChangePassword: false,
+                changePasswordForm: { old_password: '', new_password: '', confirm_password: '' },
+                changePasswordError: null,
+                showAdminResetPassword: false,
+                adminResetUser: null,
+                adminResetForm: { new_password: '', confirm_password: '' },
+                adminResetError: null,
+                editingDictId: null,
+                editingTitle: '',
 
                 async init() {
                     // Check for saved token
@@ -456,6 +572,9 @@
 
                     this.uploading = true;
                     this.uploadProgress = 0;
+                    this.uploadFileName = file.name;
+                    this.uploadTotal = this.formatSize(file.size);
+                    this.uploadLoaded = '0 B';
 
                     const formData = new FormData();
                     formData.append('file', file);
@@ -464,16 +583,21 @@
                         const xhr = new XMLHttpRequest();
                         xhr.open('POST', '/api/v1/dicts/upload');
                         xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+                        xhr.timeout = 0;
 
                         xhr.upload.onprogress = (e) => {
                             if (e.lengthComputable) {
                                 this.uploadProgress = (e.loaded / e.total) * 100;
+                                this.uploadLoaded = this.formatSize(e.loaded);
                             }
                         };
 
                         xhr.onload = () => {
                             this.uploading = false;
                             this.uploadProgress = 0;
+                            this.uploadFileName = '';
+                            this.uploadLoaded = '';
+                            this.uploadTotal = '';
 
                             if (xhr.status === 200) {
                                 const response = JSON.parse(xhr.responseText);
@@ -490,6 +614,9 @@
                         xhr.onerror = () => {
                             this.uploading = false;
                             this.uploadProgress = 0;
+                            this.uploadFileName = '';
+                            this.uploadLoaded = '';
+                            this.uploadTotal = '';
                             alert('上传失败');
                         };
 
@@ -497,6 +624,9 @@
                     } catch (e) {
                         this.uploading = false;
                         this.uploadProgress = 0;
+                        this.uploadFileName = '';
+                        this.uploadLoaded = '';
+                        this.uploadTotal = '';
                         console.error('Upload failed:', e);
                     }
                 },
@@ -573,6 +703,108 @@
                     } catch (e) {
                         console.error('Failed to reset token:', e);
                     }
+                },
+
+                openResetPassword(user) {
+                    this.adminResetUser = user;
+                    this.adminResetForm = { new_password: '', confirm_password: '' };
+                    this.adminResetError = null;
+                    this.showAdminResetPassword = true;
+                },
+
+                async adminResetPassword() {
+                    this.adminResetError = null;
+
+                    if (this.adminResetForm.new_password !== this.adminResetForm.confirm_password) {
+                        this.adminResetError = '两次输入的密码不一致';
+                        return;
+                    }
+
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/users/${this.adminResetUser.id}/password`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ new_password: this.adminResetForm.new_password })
+                        });
+
+                        if (response.code === 0) {
+                            this.showAdminResetPassword = false;
+                            alert('密码已重置');
+                        } else {
+                            this.adminResetError = response.message || '重置失败';
+                        }
+                    } catch (e) {
+                        this.adminResetError = '网络错误，请重试';
+                    }
+                },
+
+                async changePassword() {
+                    this.changePasswordError = null;
+
+                    if (this.changePasswordForm.new_password !== this.changePasswordForm.confirm_password) {
+                        this.changePasswordError = '两次输入的密码不一致';
+                        return;
+                    }
+
+                    try {
+                        const response = await this.fetchWithAuth('/api/v1/users/me/password', {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                old_password: this.changePasswordForm.old_password,
+                                new_password: this.changePasswordForm.new_password
+                            })
+                        });
+
+                        if (response.code === 0) {
+                            this.showChangePassword = false;
+                            this.changePasswordForm = { old_password: '', new_password: '', confirm_password: '' };
+                            alert('密码修改成功');
+                        } else {
+                            this.changePasswordError = response.message || '修改失败';
+                        }
+                    } catch (e) {
+                        this.changePasswordError = '网络错误，请重试';
+                    }
+                },
+
+                startEditTitle(dict) {
+                    this.editingDictId = dict.id;
+                    this.editingTitle = dict.title || '';
+                    this.$nextTick(() => {
+                        const input = this.$el.querySelector('input[x-ref="titleInput"]');
+                        if (input) { input.focus(); input.select(); }
+                    });
+                },
+
+                cancelEditTitle() {
+                    this.editingDictId = null;
+                    this.editingTitle = '';
+                },
+
+                async saveTitle(dict) {
+                    if (this.editingDictId !== dict.id) return;
+                    const newTitle = this.editingTitle.trim();
+                    if (!newTitle) {
+                        this.cancelEditTitle();
+                        return;
+                    }
+                    if (newTitle === dict.title) {
+                        this.cancelEditTitle();
+                        return;
+                    }
+
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/dicts/${dict.id}/title`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ title: newTitle })
+                        });
+
+                        if (response.code === 0) {
+                            dict.title = newTitle;
+                        }
+                    } catch (e) {
+                        console.error('Failed to update title:', e);
+                    }
+                    this.cancelEditTitle();
                 },
 
                 copyToken(token) {
