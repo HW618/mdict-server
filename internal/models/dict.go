@@ -74,6 +74,11 @@ type DictStatusUpdateRequest struct {
 	IsEnabled bool `json:"is_enabled"`
 }
 
+// DictTitleUpdateRequest represents the request to update dictionary title
+type DictTitleUpdateRequest struct {
+	Title string `json:"title" binding:"required"`
+}
+
 // SearchResult represents a search result
 type SearchResult struct {
 	Word    string           `json:"word"`

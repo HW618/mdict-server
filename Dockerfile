@@ -27,7 +27,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata wget
+RUN apk --no-cache add ca-certificates tzdata wget su-exec
 
 # Create non-root user
 RUN addgroup -S mdict && adduser -S mdict -G mdict
@@ -48,8 +48,9 @@ COPY --from=builder /app/templates ./templates
 # Set ownership
 RUN chown -R mdict:mdict /app
 
-# Switch to non-root user
-USER mdict
+# Copy entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Expose port
 EXPOSE 8080
@@ -59,7 +60,7 @@ VOLUME ["/dicts", "/data"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
+    CMD su-exec mdict wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
 
 # Run
-ENTRYPOINT ["./mdict-server"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

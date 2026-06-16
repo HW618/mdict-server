@@ -341,6 +341,135 @@ func (h *UserHandler) ResetToken(c *gin.Context) {
 	})
 }
 
+// ChangePassword handles a user changing their own password
+func (h *UserHandler) ChangePassword(c *gin.Context) {
+	var req models.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid request body",
+			"data":    nil,
+		})
+		return
+	}
+
+	userID := c.GetString("userID")
+
+	user, err := h.userStore.GetByID(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    40401,
+			"message": "User not found",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Verify old password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    40301,
+			"message": "Old password is incorrect",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to hash password")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to update password",
+			"data":    nil,
+		})
+		return
+	}
+
+	if err := h.userStore.UpdatePassword(userID, string(hashedPassword)); err != nil {
+		log.Error().Err(err).Msg("Failed to update password")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "Failed to update password",
+			"data":    nil,
+		})
+		return
+	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "password_changed").
+		Str("user_id", userID).
+		Msg("User changed their password")
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Password changed successfully",
+	})
+}
+
+// AdminResetPassword handles an admin resetting a user's password
+func (h *UserHandler) AdminResetPassword(c *gin.Context) {
+	userID := c.Param("id")
+
+	var req models.AdminResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid request body",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Check if user exists
+	user, err := h.userStore.GetByID(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    40401,
+			"message": "User not found",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to hash password")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to reset password",
+			"data":    nil,
+		})
+		return
+	}
+
+	if err := h.userStore.UpdatePassword(userID, string(hashedPassword)); err != nil {
+		log.Error().Err(err).Msg("Failed to reset password")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "Failed to reset password",
+			"data":    nil,
+		})
+		return
+	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "admin_password_reset").
+		Str("target_user_id", userID).
+		Str("target_username", user.Username).
+		Str("operator_id", c.GetString("userID")).
+		Msg("Admin reset user password")
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Password reset successfully",
+	})
+}
+
 // generateRandomPassword generates a cryptographically secure random password
 // with guaranteed character diversity (at least one lowercase, uppercase, digit, special).
 func generateRandomPassword(length int) (string, error) {
