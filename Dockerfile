@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies (gcc needed for CGO/mattn/go-sqlite3)
 RUN apk add --no-cache git gcc musl-dev ca-certificates tzdata

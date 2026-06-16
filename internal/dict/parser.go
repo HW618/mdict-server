@@ -87,6 +87,16 @@ func GetMimeType(path string) string {
 		return "application/javascript"
 	case ".html", ".htm":
 		return "text/html"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	case ".eot":
+		return "application/vnd.ms-fontobject"
+	case ".ico":
+		return "image/x-icon"
 	case ".xml":
 		return "application/xml"
 	case ".json":

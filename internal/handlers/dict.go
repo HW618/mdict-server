@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/dict"
@@ -21,6 +24,70 @@ type DictHandler struct {
 	dictStore      *store.DictStore
 	dictDir        string
 	maxUploadBytes int64
+	uploads        sync.Map // upload_id -> *chunkedUpload
+}
+
+// chunkedUpload tracks a multipart upload session
+type chunkedUpload struct {
+	Filename     string
+	RelativePath string // preserved subdirectory path for folder uploads
+	TotalSize    int64
+	ChunkSize    int64
+	TotalParts   int
+	CreatedAt    time.Time
+	chunks       map[int]string // chunk_index -> temp file path
+	mu           sync.Mutex
+}
+
+// allowedUploadExts defines file extensions permitted for upload.
+// Includes dictionary files (.mdx, .mdd) and resource files (.css, .jpg, etc.)
+// used by dictionary layouts.
+var allowedUploadExts = map[string]bool{
+	".mdx":  true,
+	".mdd":  true,
+	".css":  true,
+	".js":   true,
+	".jpg":  true,
+	".jpeg": true,
+	".png":  true,
+	".gif":  true,
+	".svg":  true,
+	".webp": true,
+	".mp3":  true,
+	".wav":  true,
+	".ogg":  true,
+	".woff": true,
+	".woff2":true,
+	".ttf":  true,
+	".eot":  true,
+	".ico":  true,
+	".pdf":  true,
+}
+
+// isAllowedUploadExt checks if a file extension is permitted for upload
+func isAllowedUploadExt(ext string) bool {
+	return allowedUploadExts[strings.ToLower(ext)]
+}
+
+// findDictIDByMdd returns the dict ID for the .mdx file matching a .mdd filename.
+// e.g. "Oxford.mdd" -> looks up "Oxford.mdx" in the dict store.
+func (h *DictHandler) findDictIDByMdd(mddFilename string) string {
+	mdxFilename := strings.TrimSuffix(mddFilename, ".mdd") + ".mdx"
+	dict, err := h.dictStore.GetByFilename(mdxFilename)
+	if err != nil {
+		return ""
+	}
+	return dict.ID
+}
+
+// sanitizeRelativePath cleans a relative path and rejects path traversal attempts.
+// It returns the cleaned path or an error if the path is unsafe.
+func sanitizeRelativePath(p string) (string, error) {
+	cleaned := filepath.Clean(p)
+	if strings.Contains(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
+		return "", fmt.Errorf("unsafe path: %s", p)
+	}
+	return cleaned, nil
 }
 
 // NewDictHandler creates a new dict handler
@@ -120,7 +187,7 @@ func (h *DictHandler) UpdateStatus(c *gin.Context) {
 	})
 }
 
-// Upload handles dictionary file upload
+// Upload handles dictionary and resource file upload (supports single and batch)
 func (h *DictHandler) Upload(c *gin.Context) {
 	// Parse multipart form with memory buffer limit
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
@@ -154,35 +221,37 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	// Validate file extension
+	// Sanitize relative_path for folder uploads
+	var relativePath string
+	if req.RelativePath != "" {
+		rp, err := sanitizeRelativePath(req.RelativePath)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Unsafe relative path", "data": nil})
+			return
+		}
+		relativePath = rp
+	}
+
 	ext := strings.ToLower(filepath.Ext(safeFilename))
-	if ext != ".mdx" && ext != ".mdd" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    40001,
-			"message": "Only .mdx and .mdd files are allowed",
-			"data":    nil,
-		})
+	if !isAllowedUploadExt(ext) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "File type not allowed", "data": nil})
 		return
 	}
 
-	// Check if dictionary already exists (for .mdx files)
+	if h.maxUploadBytes > 0 && req.FileSize > h.maxUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": 41301, "message": fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024)), "data": nil})
+		return
+	}
+
+	// Check if .mdx already exists
 	if ext == ".mdx" {
 		exists, err := h.dictStore.ExistsByFilename(safeFilename)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to check dictionary existence")
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    50002,
-				"message": "Failed to check dictionary existence",
-				"data":    nil,
-			})
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 50002, "message": "Failed to check dictionary existence", "data": nil})
 			return
 		}
 		if exists {
-			c.JSON(http.StatusConflict, gin.H{
-				"code":    40901,
-				"message": "Dictionary already exists",
-				"data":    nil,
-			})
+			c.JSON(http.StatusConflict, gin.H{"code": 40901, "message": "Dictionary already exists", "data": nil})
 			return
 		}
 	}
@@ -236,10 +305,84 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	// If it's an .mdx file, load it into the engine
+	// Determine destination: use RelativePath for folder uploads
+	var dst string
+	if upload.RelativePath != "" {
+		dst = filepath.Join(h.dictDir, upload.RelativePath)
+	} else {
+		dst = filepath.Join(h.dictDir, upload.Filename)
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		h.cleanupChunks(upload)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to create directory", "data": nil})
+		return
+	}
+
+	// Assemble chunks in order
+	tmpDst := dst + ".tmp"
+
+	outFile, err := os.Create(tmpDst)
+	if err != nil {
+		h.cleanupChunks(upload)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to create file", "data": nil})
+		return
+	}
+
+	var totalWritten int64
+	indices := make([]int, 0, len(upload.chunks))
+	for idx := range upload.chunks {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	for _, idx := range indices {
+		chunkPath := upload.chunks[idx]
+		cf, err := os.Open(chunkPath)
+		if err != nil {
+			outFile.Close()
+			os.Remove(tmpDst)
+			h.cleanupChunks(upload)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to read chunk", "data": nil})
+			return
+		}
+		n, err := io.Copy(outFile, cf)
+		cf.Close()
+		os.Remove(chunkPath)
+		if err != nil {
+			outFile.Close()
+			os.Remove(tmpDst)
+			h.cleanupChunks(upload)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to assemble chunk", "data": nil})
+			return
+		}
+		totalWritten += n
+	}
+	outFile.Close()
+
+	// Clean up any remaining chunk temp files and .uploads directory
+	h.cleanupChunks(upload)
+
+	if err := os.Rename(tmpDst, dst); err != nil {
+		os.Remove(tmpDst)
+		// tmpDst is already cleaned; no chunk files remain
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to finalize file", "data": nil})
+		return
+	}
+
+	// Reload engine with new file
+	ext := strings.ToLower(filepath.Ext(upload.Filename))
 	if ext == ".mdx" {
 		if err := h.engine.LoadAll(); err != nil {
 			log.Error().Err(err).Msg("Failed to reload dictionaries")
+		}
+	} else if ext == ".mdd" {
+		dictID := h.findDictIDByMdd(upload.Filename)
+		if dictID != "" {
+			if err := h.engine.Reload(dictID); err != nil {
+				log.Error().Err(err).Str("dict_id", dictID).Msg("Failed to reload dictionary after .mdd upload")
+			}
 		}
 	}
 
@@ -249,7 +392,57 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		Str("filename", safeFilename).
 		Int64("file_size", written).
 		Str("operator_id", c.GetString("userID")).
-		Msg("Dictionary file uploaded")
+		Msg("Dictionary file uploaded (chunked)")
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "File uploaded successfully",
+		"data": gin.H{
+			"filename":  upload.Filename,
+			"file_size": totalWritten,
+		},
+	})
+}
+
+// cleanupChunks removes all temp chunk files for an upload
+func (h *DictHandler) cleanupChunks(upload *chunkedUpload) {
+	for _, path := range upload.chunks {
+		os.Remove(path)
+	}
+	// Try removing the .uploads directory if empty
+	os.Remove(filepath.Join(h.dictDir, ".uploads"))
+}
+
+// CleanupExpiredUploads removes chunked upload sessions older than maxAge.
+// Called periodically from the server to prevent temp file leaks from abandoned uploads.
+func (h *DictHandler) CleanupExpiredUploads(maxAge time.Duration) {
+	now := time.Now()
+	h.uploads.Range(func(key, value interface{}) bool {
+		upload := value.(*chunkedUpload)
+		if now.Sub(upload.CreatedAt) > maxAge {
+			h.uploads.Delete(key)
+			h.cleanupChunks(upload)
+			log.Warn().
+				Str("upload_id", key.(string)).
+				Str("filename", upload.Filename).
+				Msg("Cleaned up expired upload session")
+		}
+		return true
+	})
+}
+
+func (h *DictHandler) UpdateTitle(c *gin.Context) {
+	dictID := c.Param("id")
+
+	var req models.DictTitleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid request body",
+			"data":    nil,
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
@@ -417,9 +610,13 @@ func (h *DictHandler) GetAsset(c *gin.Context) {
 	dictID := c.Param("id")
 	assetPath := c.Param("path")
 
+	// Strip leading slash from wildcard path param (Gin includes it)
+	assetPath = strings.TrimPrefix(assetPath, "/")
+
 	// Get asset from engine
 	data, mimeType, err := h.engine.GetAsset(dictID, assetPath)
 	if err != nil {
+		h.engine.DebugLogAssetMiss(dictID, assetPath)
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40401,
 			"message": "Asset not found",

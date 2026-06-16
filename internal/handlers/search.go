@@ -3,7 +3,9 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
+	markdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/dict"
 )
@@ -53,6 +55,17 @@ func (h *SearchHandler) Search(c *gin.Context) {
 		return
 	}
 
+	// If markdown=true, convert HTML to Markdown and omit the HTML field
+	if strings.ToLower(c.Query("markdown")) == "true" {
+		for i := range result.Results {
+			md, err := markdown.ConvertString(result.Results[i].HTML)
+			if err == nil {
+				result.Results[i].Markdown = strings.TrimSpace(md)
+			}
+			result.Results[i].HTML = "" // omit from JSON via omitempty
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "success",
@@ -72,8 +85,6 @@ func (h *SearchHandler) FuzzySearch(c *gin.Context) {
 		return
 	}
 
-	dictID := c.Query("dict_id")
-
 	// Parse pagination parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
@@ -85,7 +96,7 @@ func (h *SearchHandler) FuzzySearch(c *gin.Context) {
 		pageSize = 20
 	}
 
-	result, err := h.engine.FuzzySearch(keyword, dictID, page, pageSize)
+	result, err := h.engine.FuzzySearch(keyword, "", page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50001,

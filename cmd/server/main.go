@@ -88,7 +88,6 @@ func main() {
 		AllowOrigins: cfg.CORSOrigins,
 	}))
 	router.Use(middleware.Logger())
-	router.Use(middleware.RateLimit(cfg.RateLimit))
 
 	// Serve static files (templates)
 	router.StaticFile("/", "./templates/index.html")
@@ -114,6 +113,7 @@ func main() {
 		// API access routes (JWT or API token)
 		apiAccess := api.Group("")
 		apiAccess.Use(authMiddleware.RequireAPIAccess())
+		apiAccess.Use(middleware.RateLimit(cfg.RateLimit))
 		{
 			apiAccess.GET("/search", searchHandler.Search)
 			apiAccess.GET("/search/fuzzy", searchHandler.FuzzySearch)
@@ -127,14 +127,17 @@ func main() {
 			dictAdmin.PATCH("/dicts/:id/status", dictHandler.UpdateStatus)
 			dictAdmin.PUT("/dicts/:id/title", dictHandler.UpdateTitle)
 			dictAdmin.POST("/dicts/upload", dictHandler.Upload)
+			dictAdmin.POST("/dicts/upload/init", dictHandler.UploadInit)
+			dictAdmin.PUT("/dicts/upload/chunk", dictHandler.UploadChunk)
+			dictAdmin.POST("/dicts/upload/complete", dictHandler.UploadComplete)
 			dictAdmin.GET("/dicts/:id/download", dictHandler.Download)
 			dictAdmin.DELETE("/dicts/:id", dictHandler.Delete)
-			dictAdmin.GET("/assets/:id/*path", dictHandler.GetAsset)
 		}
 
 		// User admin routes
 		userAdmin := api.Group("")
 		userAdmin.Use(authMiddleware.RequireUserAdmin())
+		userAdmin.Use(middleware.RateLimit(cfg.RateLimit))
 		{
 			userAdmin.GET("/users", userHandler.List)
 			userAdmin.POST("/users", userHandler.Create)
@@ -168,6 +171,7 @@ func main() {
 				} else {
 					log.Debug().Msg("Cleaned expired refresh tokens")
 				}
+				dictHandler.CleanupExpiredUploads(1 * time.Hour)
 			case <-tokenCleanupDone:
 				return
 			}

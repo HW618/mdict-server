@@ -53,6 +53,27 @@ func (h *UserHandler) List(c *gin.Context) {
 	})
 }
 
+// GetCurrentUser returns the current authenticated user's info
+func (h *UserHandler) GetCurrentUser(c *gin.Context) {
+	userID := c.GetString("userID")
+
+	user, err := h.userStore.GetByID(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    40401,
+			"message": "User not found",
+			"data":    nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    []models.UserResponse{user.ToResponse()},
+	})
+}
+
 // Create creates a new user
 func (h *UserHandler) Create(c *gin.Context) {
 	var req models.UserCreateRequest

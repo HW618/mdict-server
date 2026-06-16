@@ -30,6 +30,7 @@ go.work.sum
 
 # Data directories
 /data/
+/dicts/
 /dicts/*.mdx
 /dicts/*.mdd
 
