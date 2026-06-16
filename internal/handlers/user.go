@@ -53,6 +53,27 @@ func (h *UserHandler) List(c *gin.Context) {
 	})
 }
 
+// GetCurrentUser returns the current authenticated user's info
+func (h *UserHandler) GetCurrentUser(c *gin.Context) {
+	userID := c.GetString("userID")
+
+	user, err := h.userStore.GetByID(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    40401,
+			"message": "User not found",
+			"data":    nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    []models.UserResponse{user.ToResponse()},
+	})
+}
+
 // Create creates a new user
 func (h *UserHandler) Create(c *gin.Context) {
 	var req models.UserCreateRequest
@@ -411,6 +432,19 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 // AdminResetPassword handles an admin resetting a user's password
 func (h *UserHandler) AdminResetPassword(c *gin.Context) {
+	operatorID := c.GetString("userID")
+
+	// Validate operator's current password
+	operator, err := h.userStore.GetByID(operatorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "Failed to verify operator",
+			"data":    nil,
+		})
+		return
+	}
+
 	userID := c.Param("id")
 
 	var req models.AdminResetPasswordRequest
@@ -423,7 +457,17 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Check if user exists
+	// Verify operator's old password
+	if err := bcrypt.CompareHashAndPassword([]byte(operator.Password), []byte(req.OldPassword)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    40301,
+			"message": "Current password is incorrect",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Check if target user exists
 	user, err := h.userStore.GetByID(userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

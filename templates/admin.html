@@ -59,20 +59,26 @@
                     :class="{ 'border-blue-400 bg-blue-50': dragover }"
                 >
                     <div class="text-gray-600">
-                        <p class="text-lg mb-2">拖拽 .mdx/.mdd 文件到此处</p>
-                        <p class="text-sm">或</p>
-                        <label class="mt-2 inline-block px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700">
-                            选择文件
-                            <input type="file" class="hidden" accept=".mdx,.mdd" @change="handleFileSelect($event)">
-                        </label>
+                        <p class="text-lg mb-2">拖拽词典/资源文件到此处</p>
+                        <p class="text-sm">支持 .mdx .mdd .css .jpg 等文件，可多选</p>
+                        <div class="mt-2 flex items-center justify-center gap-3">
+                            <label class="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700">
+                                选择文件
+                                <input type="file" class="hidden" accept=".mdx,.mdd,.css,.js,.jpg,.jpeg,.png,.gif,.svg,.webp,.mp3,.wav,.ogg,.woff,.woff2,.ttf,.eot,.ico,.pdf" multiple @change="handleFileSelect($event)">
+                            </label>
+                            <label class="inline-block px-4 py-2 bg-green-600 text-white rounded-lg cursor-pointer hover:bg-green-700">
+                                选择文件夹
+                                <input type="file" class="hidden" webkitdirectory @change="handleFolderSelect($event)">
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <div x-show="uploading" x-cloak class="border-2 border-blue-200 bg-blue-50 rounded-lg p-6 mb-6">
-                    <p class="text-sm font-medium text-gray-700 mb-2" x-text="'上传中: ' + uploadFileName"></p>
+                    <p class="text-sm font-medium text-gray-700 mb-2" x-text="uploadFileName"></p>
                     <div class="w-full bg-gray-200 rounded-full h-2.5">
                         <div class="bg-blue-600 h-2.5 rounded-full transition-all" :style="`width: ${uploadProgress}%`"></div>
                     </div>
-                    <p class="text-sm text-gray-500 mt-2" x-text="uploadLoaded + ' / ' + uploadTotal"></p>
+                    <p class="text-sm text-gray-500 mt-2" x-text="uploadStatusText"></p>
                 </div>
 
                 <!-- Dictionary List -->
@@ -105,24 +111,38 @@
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-900" x-text="dict.filename"></td>
                                     <td class="px-4 py-3 text-sm text-gray-600">
-                                        <template x-if="editingDictId !== dict.id">
-                                            <span
-                                                class="cursor-pointer hover:text-blue-600 border-b border-dashed border-transparent hover:border-blue-600"
-                                                @click="startEditTitle(dict)"
-                                                x-text="dict.title || '-'"
-                                            ></span>
-                                        </template>
-                                        <template x-if="editingDictId === dict.id">
-                                            <input
-                                                type="text"
-                                                x-model="editingTitle"
-                                                @keydown.enter="saveTitle(dict)"
-                                                @keydown.escape="cancelEditTitle()"
-                                                @blur="saveTitle(dict)"
-                                                class="w-full px-2 py-1 border border-blue-400 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-                                                x-ref="titleInput"
-                                            >
-                                        </template>
+                                        <div class="flex items-center space-x-1">
+                                            <template x-if="editingDictId !== dict.id">
+                                                <div class="flex items-center space-x-1">
+                                                    <span class="text-gray-600" x-text="dict.title || '-'"></span>
+                                                    <button
+                                                        @click="startEditTitle(dict)"
+                                                        class="text-gray-400 hover:text-blue-600 flex-shrink-0"
+                                                        title="修改标题"
+                                                    >
+                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                                    </button>
+                                                </div>
+                                            </template>
+                                            <template x-if="editingDictId === dict.id">
+                                                <div class="flex items-center space-x-1">
+                                                    <input
+                                                        type="text"
+                                                        x-model="editingTitle"
+                                                        @keydown.enter="saveTitle(dict)"
+                                                        @keydown.escape="cancelEditTitle()"
+                                                        class="w-full px-2 py-1 border border-blue-400 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                                        x-ref="titleInput"
+                                                    >
+                                                    <button @click="saveTitle(dict)" class="text-green-600 hover:text-green-800 flex-shrink-0" title="保存">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                                    </button>
+                                                    <button @click="cancelEditTitle()" class="text-gray-400 hover:text-red-600 flex-shrink-0" title="取消">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                                    </button>
+                                                </div>
+                                            </template>
+                                        </div>
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-600" x-text="formatSize(dict.file_size)"></td>
                                     <td class="px-4 py-3 text-sm text-gray-600" x-text="dict.entry_count.toLocaleString()"></td>
@@ -146,6 +166,7 @@
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-xl font-bold text-gray-900">👥 用户管理</h2>
                     <button
+                        x-show="isAdmin"
                         @click="showCreateUser = true"
                         class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
@@ -195,20 +216,24 @@
                                         >
                                             修改密码
                                         </button>
-                                        <button
-                                            @click="resetToken(u)"
-                                                class="text-blue-600 hover:text-blue-800 text-sm"
-                                            >
-                                                重置Token
-                                            </button>
-                                            <button
-                                                @click="deleteUser(u)"
-                                                class="text-red-600 hover:text-red-800 text-sm"
-                                                x-show="!u.permissions.is_user_admin"
-                                            >
-                                                删除
-                                            </button>
-                                        </div>
+                                        <template x-if="isAdmin && u.id !== user?.id">
+                                            <div class="flex space-x-2">
+                                                <button
+                                                    @click="resetToken(u)"
+                                                    class="text-blue-600 hover:text-blue-800 text-sm"
+                                                >
+                                                    重置Token
+                                                </button>
+                                                <button
+                                                    @click="deleteUser(u)"
+                                                    class="text-red-600 hover:text-red-800 text-sm"
+                                                    x-show="!u.permissions.is_user_admin"
+                                                >
+                                                    删除
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
                                     </td>
                                 </tr>
                             </template>
@@ -353,13 +378,13 @@
         </div>
     </div>
 
-    <!-- Change Password Modal (current user) -->
+    <!-- Change Password Modal (own password) -->
     <div x-show="showChangePassword" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
             <h2 class="text-2xl font-bold mb-6">修改密码</h2>
             <form @submit.prevent="changePassword()">
                 <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">旧密码</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">当前密码</label>
                     <input
                         type="password"
                         x-model="changePasswordForm.old_password"
@@ -395,12 +420,22 @@
         </div>
     </div>
 
-    <!-- Admin Reset Password Modal -->
+    <!-- Admin Reset Password Modal (requires operator's current password) -->
     <div x-show="showAdminResetPassword" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
-            <h2 class="text-2xl font-bold mb-2">重置密码</h2>
-            <p class="text-sm text-gray-500 mb-6">为用户 <span class="font-medium text-gray-700" x-text="adminResetUser?.username"></span> 设置新密码</p>
+            <h2 class="text-2xl font-bold mb-6">修改用户密码</h2>
+            <p class="text-sm text-gray-600 mb-4">正在修改用户 <strong x-text="adminResetUser?.username"></strong> 的密码</p>
             <form @submit.prevent="adminResetPassword()">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">您的当前密码</label>
+                    <input
+                        type="password"
+                        x-model="adminResetForm.old_password"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
+                        placeholder="输入您自己的当前密码以验证身份"
+                    >
+                </div>
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-2">新密码</label>
                     <input
@@ -423,7 +458,7 @@
                 <div x-show="adminResetError" class="mb-4 text-red-600 text-sm" x-text="adminResetError"></div>
                 <div class="flex justify-end space-x-4">
                     <button type="button" @click="showAdminResetPassword = false" class="px-4 py-2 text-gray-600 hover:text-gray-800">取消</button>
-                    <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">确认重置</button>
+                    <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">确认修改</button>
                 </div>
             </form>
         </div>
@@ -431,9 +466,14 @@
 
     <script>
         function adminApp() {
+            const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per chunk
+            const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB: use chunked upload above this
+            const MAX_CHUNK_RETRIES = 3;
+
             return {
                 user: null,
                 token: null,
+                isAdmin: false,
                 dicts: [],
                 users: [],
                 loading: true,
@@ -455,26 +495,25 @@
                 uploadProgress: 0,
                 dragover: false,
                 uploadFileName: '',
-                uploadLoaded: '',
-                uploadTotal: '',
+                uploadStatusText: '',
                 showChangePassword: false,
                 changePasswordForm: { old_password: '', new_password: '', confirm_password: '' },
                 changePasswordError: null,
                 showAdminResetPassword: false,
                 adminResetUser: null,
-                adminResetForm: { new_password: '', confirm_password: '' },
+                adminResetForm: { old_password: '', new_password: '', confirm_password: '' },
                 adminResetError: null,
                 editingDictId: null,
                 editingTitle: '',
 
                 async init() {
-                    // Check for saved token
                     this.token = localStorage.getItem('token');
                     if (this.token) {
                         try {
                             const userStr = localStorage.getItem('user');
                             if (userStr) {
                                 this.user = JSON.parse(userStr);
+                                this.isAdmin = this.user?.permissions?.is_user_admin || false;
                             }
                         } catch (e) {
                             this.token = null;
@@ -508,12 +547,27 @@
 
                 async loadUsers() {
                     try {
+                        // Admin can see all users
                         const response = await this.fetchWithAuth('/api/v1/users');
                         if (response.code === 0) {
                             this.users = response.data || [];
+                            return;
+                        }
+                        // If forbidden (non-admin), fall back to own info
+                        const meResponse = await this.fetchWithAuth('/api/v1/users/me');
+                        if (meResponse.code === 0) {
+                            this.users = meResponse.data || [];
                         }
                     } catch (e) {
-                        console.error('Failed to load users:', e);
+                        // Try /me as fallback
+                        try {
+                            const meResponse = await this.fetchWithAuth('/api/v1/users/me');
+                            if (meResponse.code === 0) {
+                                this.users = meResponse.data || [];
+                            }
+                        } catch (e2) {
+                            console.error('Failed to load users:', e2);
+                        }
                     }
                 },
 
@@ -552,32 +606,71 @@
                     this.dragover = false;
                     const files = event.dataTransfer.files;
                     if (files.length > 0) {
-                        this.uploadFile(files[0]);
+                        this.uploadFiles(files);
                     }
                 },
 
                 handleFileSelect(event) {
                     const files = event.target.files;
                     if (files.length > 0) {
-                        this.uploadFile(files[0]);
+                        this.uploadFiles(files);
                     }
+                    event.target.value = '';
                 },
 
-                async uploadFile(file) {
-                    const ext = file.name.split('.').pop().toLowerCase();
-                    if (ext !== 'mdx' && ext !== 'mdd') {
-                        alert('只支持 .mdx 和 .mdd 文件');
+                handleFolderSelect(event) {
+                    const files = event.target.files;
+                    if (files.length > 0) {
+                        this.uploadFiles(files, true);
+                    }
+                    event.target.value = '';
+                },
+
+                async uploadFiles(fileList, isFolder = false) {
+                    const files = Array.from(fileList);
+                    const allowedExts = ['mdx','mdd','css','js','jpg','jpeg','png','gif','svg','webp','mp3','wav','ogg','woff','woff2','ttf','eot','ico','pdf'];
+                    const valid = files.filter(f => allowedExts.includes(f.name.split('.').pop().toLowerCase()));
+                    if (valid.length === 0) {
+                        alert('没有可上传的文件（不支持的文件类型）');
                         return;
                     }
 
+                    // Build relativePathMap: file -> relative path (for folder uploads)
+                    const relativePathMap = new Map();
+                    if (isFolder) {
+                        for (const f of valid) {
+                            if (f.webkitRelativePath) {
+                                relativePathMap.set(f, f.webkitRelativePath);
+                            }
+                        }
+                    }
+
+                    // Separate large files (chunked) from small files (batch)
+                    const largeFiles = valid.filter(f => f.size >= LARGE_FILE_THRESHOLD);
+                    const smallFiles = valid.filter(f => f.size < LARGE_FILE_THRESHOLD);
+
+                    // Upload small files in one batch request
+                    if (smallFiles.length > 0) {
+                        await this.batchUpload(smallFiles, relativePathMap);
+                    }
+
+                    // Upload large files one by one with chunking
+                    for (const file of largeFiles) {
+                        await this.chunkedUpload(file, relativePathMap.get(file) || '');
+                    }
+                },
+
+                async batchUpload(files, relativePathMap = new Map()) {
                     this.uploading = true;
                     this.uploadProgress = 0;
-                    this.uploadFileName = file.name;
-                    this.uploadTotal = this.formatSize(file.size);
-                    this.uploadLoaded = '0 B';
+                    this.uploadFileName = files.length === 1 ? files[0].name : `${files.length} 个文件`;
+                    this.uploadStatusText = `上传中 (0/${files.length})...`;
 
                     const formData = new FormData();
-                    formData.append('file', file);
+                    for (const f of files) {
+                        formData.append('files', f);
+                        formData.append('relative_path', relativePathMap.get(f) || '');
+                    }
 
                     try {
                         const xhr = new XMLHttpRequest();
@@ -588,46 +681,149 @@
                         xhr.upload.onprogress = (e) => {
                             if (e.lengthComputable) {
                                 this.uploadProgress = (e.loaded / e.total) * 100;
-                                this.uploadLoaded = this.formatSize(e.loaded);
+                                this.uploadStatusText = `${this.formatSize(e.loaded)} / ${this.formatSize(e.total)}`;
                             }
                         };
 
-                        xhr.onload = () => {
-                            this.uploading = false;
-                            this.uploadProgress = 0;
-                            this.uploadFileName = '';
-                            this.uploadLoaded = '';
-                            this.uploadTotal = '';
-
-                            if (xhr.status === 200) {
-                                const response = JSON.parse(xhr.responseText);
-                                if (response.code === 0) {
-                                    this.loadDicts();
+                        const result = await new Promise((resolve, reject) => {
+                            xhr.onload = () => {
+                                if (xhr.status === 200) {
+                                    resolve(JSON.parse(xhr.responseText));
                                 } else {
-                                    alert(response.message || '上传失败');
+                                    reject(new Error('Upload failed'));
                                 }
-                            } else {
-                                alert('上传失败');
+                            };
+                            xhr.onerror = () => reject(new Error('Network error'));
+                            xhr.send(formData);
+                        });
+
+                        if (result.code === 0) {
+                            await this.loadDicts();
+                            if (result.data && result.data.some) {
+                                const failed = result.data.filter(r => r.error);
+                                if (failed.length > 0) {
+                                    const msgs = failed.map(r => `${r.filename}: ${r.error}`).join('\n');
+                                    alert(`部分文件上传失败:\n${msgs}`);
+                                }
                             }
-                        };
-
-                        xhr.onerror = () => {
-                            this.uploading = false;
-                            this.uploadProgress = 0;
-                            this.uploadFileName = '';
-                            this.uploadLoaded = '';
-                            this.uploadTotal = '';
-                            alert('上传失败');
-                        };
-
-                        xhr.send(formData);
+                        } else {
+                            alert(result.message || '上传失败');
+                        }
                     } catch (e) {
+                        alert('上传失败: ' + e.message);
+                    } finally {
                         this.uploading = false;
                         this.uploadProgress = 0;
                         this.uploadFileName = '';
-                        this.uploadLoaded = '';
-                        this.uploadTotal = '';
-                        console.error('Upload failed:', e);
+                        this.uploadStatusText = '';
+                    }
+                },
+
+                async chunkedUpload(file, relativePath = '') {
+                    this.uploading = true;
+                    this.uploadProgress = 0;
+                    this.uploadFileName = file.name;
+                    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+                    this.uploadStatusText = `准备分片上传 (${totalChunks} 片)...`;
+
+                    try {
+                        // Init
+                        const initBody = {
+                            filename: file.name,
+                            file_size: file.size,
+                            chunk_size: CHUNK_SIZE
+                        };
+                        if (relativePath) {
+                            initBody.relative_path = relativePath;
+                        }
+                        const initResp = await this.fetchWithAuth('/api/v1/dicts/upload/init', {
+                            method: 'POST',
+                            body: JSON.stringify(initBody)
+                        });
+
+                        if (initResp.code !== 0) {
+                            throw new Error(initResp.message || '初始化上传失败');
+                        }
+
+                        const uploadId = initResp.data.upload_id;
+                        const totalParts = initResp.data.total_parts;
+
+                        // Upload chunks with retry
+                        for (let i = 0; i < totalParts; i++) {
+                            const start = i * CHUNK_SIZE;
+                            const end = Math.min(start + CHUNK_SIZE, file.size);
+                            const chunk = file.slice(start, end);
+
+                            let success = false;
+                            let lastError = null;
+
+                            for (let attempt = 1; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+                                try {
+                                    const formData = new FormData();
+                                    formData.append('upload_id', uploadId);
+                                    formData.append('chunk_index', i.toString());
+                                    formData.append('chunk', chunk, `${file.name}.part${i}`);
+
+                                    const chunkResp = await new Promise((resolve, reject) => {
+                                        const xhr = new XMLHttpRequest();
+                                        xhr.open('PUT', '/api/v1/dicts/upload/chunk');
+                                        xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+                                        xhr.timeout = 300000; // 5 min per chunk
+
+                                        xhr.onload = () => {
+                                            if (xhr.status === 200) {
+                                                resolve(JSON.parse(xhr.responseText));
+                                            } else {
+                                                reject(new Error(`HTTP ${xhr.status}`));
+                                            }
+                                        };
+                                        xhr.onerror = () => reject(new Error('Network error'));
+                                        xhr.ontimeout = () => reject(new Error('Timeout'));
+                                        xhr.send(formData);
+                                    });
+
+                                    if (chunkResp.code === 0) {
+                                        success = true;
+                                        break;
+                                    } else {
+                                        lastError = new Error(chunkResp.message);
+                                    }
+                                } catch (e) {
+                                    lastError = e;
+                                    if (attempt < MAX_CHUNK_RETRIES) {
+                                        // Exponential backoff: 1s, 2s
+                                        await new Promise(r => setTimeout(r, 1000 * attempt));
+                                    }
+                                }
+                            }
+
+                            if (!success) {
+                                throw new Error(`分片 ${i + 1}/${totalParts} 上传失败: ${lastError?.message || '未知错误'}`);
+                            }
+
+                            this.uploadProgress = ((i + 1) / totalParts) * 100;
+                            this.uploadStatusText = `分片 ${i + 1}/${totalParts} 完成 (${this.formatSize(end)} / ${this.formatSize(file.size)})`;
+                        }
+
+                        // Complete
+                        this.uploadStatusText = '正在合并文件...';
+                        const completeResp = await this.fetchWithAuth('/api/v1/dicts/upload/complete', {
+                            method: 'POST',
+                            body: JSON.stringify({ upload_id: uploadId })
+                        });
+
+                        if (completeResp.code !== 0) {
+                            throw new Error(completeResp.message || '合并文件失败');
+                        }
+
+                        await this.loadDicts();
+                    } catch (e) {
+                        alert('上传失败: ' + e.message);
+                    } finally {
+                        this.uploading = false;
+                        this.uploadProgress = 0;
+                        this.uploadFileName = '';
+                        this.uploadStatusText = '';
                     }
                 },
 
@@ -707,7 +903,7 @@
 
                 openResetPassword(user) {
                     this.adminResetUser = user;
-                    this.adminResetForm = { new_password: '', confirm_password: '' };
+                    this.adminResetForm = { old_password: '', new_password: '', confirm_password: '' };
                     this.adminResetError = null;
                     this.showAdminResetPassword = true;
                 },
@@ -720,17 +916,25 @@
                         return;
                     }
 
+                    if (this.adminResetForm.new_password.length < 6) {
+                        this.adminResetError = '新密码至少6位';
+                        return;
+                    }
+
                     try {
                         const response = await this.fetchWithAuth(`/api/v1/users/${this.adminResetUser.id}/password`, {
                             method: 'PUT',
-                            body: JSON.stringify({ new_password: this.adminResetForm.new_password })
+                            body: JSON.stringify({
+                                old_password: this.adminResetForm.old_password,
+                                new_password: this.adminResetForm.new_password
+                            })
                         });
 
                         if (response.code === 0) {
                             this.showAdminResetPassword = false;
-                            alert('密码已重置');
+                            alert('密码已修改');
                         } else {
-                            this.adminResetError = response.message || '重置失败';
+                            this.adminResetError = response.message || '修改失败';
                         }
                     } catch (e) {
                         this.adminResetError = '网络错误，请重试';
@@ -742,6 +946,11 @@
 
                     if (this.changePasswordForm.new_password !== this.changePasswordForm.confirm_password) {
                         this.changePasswordError = '两次输入的密码不一致';
+                        return;
+                    }
+
+                    if (this.changePasswordForm.new_password.length < 6) {
+                        this.changePasswordError = '新密码至少6位';
                         return;
                     }
 
@@ -812,7 +1021,6 @@
                     navigator.clipboard.writeText(token).then(() => {
                         alert('Token 已复制到剪贴板');
                     }).catch(() => {
-                        // Fallback for older browsers
                         const textarea = document.createElement('textarea');
                         textarea.value = token;
                         document.body.appendChild(textarea);
@@ -846,6 +1054,7 @@
                         if (data.code === 0) {
                             this.token = data.data.access_token;
                             this.user = data.data.user;
+                            this.isAdmin = this.user?.permissions?.is_user_admin || false;
 
                             localStorage.setItem('token', this.token);
                             localStorage.setItem('refresh_token', data.data.refresh_token);
@@ -866,6 +1075,7 @@
                 logout() {
                     this.token = null;
                     this.user = null;
+                    this.isAdmin = false;
                     localStorage.removeItem('token');
                     localStorage.removeItem('refresh_token');
                     localStorage.removeItem('user');

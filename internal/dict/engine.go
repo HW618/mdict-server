@@ -2,8 +2,10 @@ package dict
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ type LoadedDict struct {
 	mddDict    *mdx.Mdict                 // MDD resource file (nil if no .mdd)
 	fuzzyStore *mdx.MemoryFuzzyIndexStore // fuzzy search index
 	dictName   string                     // dictionary name used in fuzzy store (DictionaryInfo.Name)
+	resDir     string                     // directory for standalone resource files (same as .mdx filename without ext)
 }
 
 // NewEngine creates a new dictionary engine
@@ -42,9 +45,15 @@ func NewEngine(dictDir string, dictStore *store.DictStore) *Engine {
 	p.AllowElements("div", "span", "p", "b", "i", "u", "a", "img", "audio", "source",
 		"br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
 		"table", "tr", "td", "th", "thead", "tbody", "font", "sup", "sub",
-		"blockquote", "pre", "code", "dl", "dt", "dd")
+		"blockquote", "pre", "code", "dl", "dt", "dd", "em", "strong", "small",
+		"mark", "abbr", "ruby", "rt", "rp", "bdo",
+		"style", "link")
 	p.AllowAttrs("href", "src", "alt", "title", "class", "style", "width", "height",
-		"controls", "autoplay", "loop", "type", "color", "size", "face").Globally()
+		"controls", "autoplay", "loop", "type", "color", "size", "face",
+		"rel", "media", "charset", "cellpadding", "cellspacing", "border",
+		"align", "valign", "bgcolor", "nowrap", "colspan", "rowspan",
+		"scope", "id", "name").Globally()
+	p.AllowDataAttributes()
 
 	return &Engine{
 		dicts:     make(map[string]*LoadedDict),
@@ -54,28 +63,29 @@ func NewEngine(dictDir string, dictStore *store.DictStore) *Engine {
 	}
 }
 
-// LoadAll loads all dictionaries from the dictionary directory
+// LoadAll loads all dictionaries from the dictionary directory (including subdirectories)
 func (e *Engine) LoadAll() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Scan directory for .mdx files
-	entries, err := os.ReadDir(e.dictDir)
-	if err != nil {
-		return fmt.Errorf("failed to read dictionary directory: %w", err)
-	}
+	// Recursively scan for .mdx files
+	var mdxFiles []string
+	filepath.WalkDir(e.dictDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), ".mdx") {
+			relPath, _ := filepath.Rel(e.dictDir, path)
+			mdxFiles = append(mdxFiles, relPath)
+		}
+		return nil
+	})
 
 	loadedCount := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		filename := entry.Name()
-		if !strings.HasSuffix(strings.ToLower(filename), ".mdx") {
-			continue
-		}
-
+	for _, filename := range mdxFiles {
 		// Check if already loaded
 		dictID := models.NewDictionary(filename, 0).ID
 		if _, exists := e.dicts[dictID]; exists {
@@ -167,6 +177,13 @@ func (e *Engine) loadDict(filename string) error {
 		}
 	}
 
+	// Resource subdirectory: same name as .mdx without extension
+	resDir := strings.TrimSuffix(filename, filepath.Ext(filename))
+	resDirPath := filepath.Join(e.dictDir, resDir)
+	if info, err := os.Stat(resDirPath); err == nil && info.IsDir() {
+		log.Info().Str("resDir", resDirPath).Msg("Found resource directory for dictionary")
+	}
+
 	// Build fuzzy search index
 	fuzzyStore := mdx.NewMemoryFuzzyIndexStore()
 	exportedEntries, err := mdxDict.ExportEntries()
@@ -214,6 +231,7 @@ func (e *Engine) loadDict(filename string) error {
 		mddDict:    mddDict,
 		fuzzyStore: fuzzyStore,
 		dictName:   info.Name,
+		resDir:     resDir,
 	}
 
 	log.Info().
@@ -286,7 +304,27 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 		}
 
 		// Sanitize HTML output
-		cleanHTML := e.sanitizer.Sanitize(string(htmlBytes))
+		rawHTML := string(htmlBytes)
+		// Extract <style> blocks before sanitization (bluemonday strips them)
+		styleBlocks := extractStyleBlocks(rawHTML)
+		log.Debug().
+			Str("word", word).
+			Str("dictID", id).
+			Int("styleBlocks", len(styleBlocks)).
+			Int("rawHTMLLen", len(rawHTML)).
+			Msg("Extracted style blocks from dictionary HTML")
+		cleanHTML := e.sanitizer.Sanitize(rawHTML)
+		// Re-inject style blocks after sanitization, with rewritten URLs
+		if len(styleBlocks) > 0 {
+			var styleHTML string
+			for _, css := range styleBlocks {
+				css = rewriteAssetURLs(css, id)
+				styleHTML += "<style type=\"text/css\">" + css + "</style>"
+			}
+			cleanHTML = styleHTML + cleanHTML
+		}
+		// Rewrite resource URLs to point to the asset endpoint
+		cleanHTML = rewriteAssetURLs(cleanHTML, id)
 
 		// Check for audio in MDD
 		hasAudio := false
@@ -311,7 +349,99 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 	return result, nil
 }
 
-// FuzzySearch performs a fuzzy search across all enabled dictionaries
+// styleBlockPattern matches <style>...</style> blocks in dictionary HTML.
+var styleBlockPattern = regexp.MustCompile(`(?is)<style[^>]*>(.*?)</style>`)
+
+// linkStylePattern matches <link rel="stylesheet" href="..."> tags.
+var linkStylePattern = regexp.MustCompile(`(?i)<link[^>]+rel\s*=\s*["']?stylesheet["']?[^>]*>`)
+
+// linkHrefPattern extracts href from a link tag.
+var linkHrefPattern = regexp.MustCompile(`(?i)href\s*=\s*["']([^"']+)["']`)
+
+// extractStyleBlocks extracts the CSS content from <style> blocks.
+func extractStyleBlocks(html string) []string {
+	matches := styleBlockPattern.FindAllStringSubmatch(html, -1)
+	var blocks []string
+	// First, collect <link rel="stylesheet"> as @import directives (must come first in CSS)
+	linkMatches := linkStylePattern.FindAllString(html, -1)
+	for _, linkTag := range linkMatches {
+		hrefSub := linkHrefPattern.FindStringSubmatch(linkTag)
+		if len(hrefSub) > 1 && strings.TrimSpace(hrefSub[1]) != "" {
+			blocks = append(blocks, "@import \""+hrefSub[1]+"\";")
+		}
+	}
+	// Then, collect inline <style> block contents
+	for _, m := range matches {
+		if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			blocks = append(blocks, m[1])
+		}
+	}
+
+	return blocks
+}
+
+// assetURLPattern matches href/src attributes referencing resource files.
+var assetURLPattern = regexp.MustCompile(`(?:href|src)\s*=\s*["']([^"']+?\.(css|js|png|jpg|jpeg|gif|svg|webp|mp3|wav|ogg|woff|woff2|ttf|eot|ico|pdf|m4a))["']`)
+
+// cssURLPattern matches url() references in inline styles and <style> blocks.
+var cssURLPattern = regexp.MustCompile(`url\(\s*["']?([^"')]+?\.(css|js|png|jpg|jpeg|gif|svg|webp|mp3|wav|ogg|woff|woff2|ttf|eot|ico|pdf|m4a))\s*["']?\)`)
+
+// cssImportPattern matches @import 'file.css' or @import "file.css" (without url() wrapper).
+var cssImportPattern = regexp.MustCompile(`@import\s+["']([^"']+\.(css))["']`)
+
+// rewriteAssetURLs rewrites resource URLs in MDX HTML output to point to the
+// server's asset endpoint (/api/v1/assets/:id/...) so the browser can load
+// CSS, images, fonts, etc. from either the MDD or the filesystem.
+func rewriteAssetURLs(html, dictID string) string {
+	origHTML := html
+	rewritePath := func(originalPath string) string {
+		if strings.HasPrefix(originalPath, "http") || strings.HasPrefix(originalPath, "/api/") {
+			return originalPath
+		}
+		assetPath := strings.ReplaceAll(originalPath, `\`, "/")
+		assetPath = strings.TrimPrefix(assetPath, "./")
+		assetPath = strings.TrimPrefix(assetPath, "/")
+		return "/api/v1/assets/" + dictID + "/" + assetPath
+	}
+
+	// Rewrite href/src attributes
+	html = assetURLPattern.ReplaceAllStringFunc(html, func(match string) string {
+		sub := assetURLPattern.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		replacement := rewritePath(sub[1])
+		return strings.Replace(match, sub[1], replacement, 1)
+	})
+
+	// Rewrite url() references in inline styles
+	html = cssURLPattern.ReplaceAllStringFunc(html, func(match string) string {
+		sub := cssURLPattern.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		replacement := rewritePath(sub[1])
+		return strings.Replace(match, sub[1], replacement, 1)
+	})
+
+	// Rewrite @import 'file.css' references (without url() wrapper)
+	html = cssImportPattern.ReplaceAllStringFunc(html, func(match string) string {
+		sub := cssImportPattern.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		replacement := rewritePath(sub[1])
+		return strings.Replace(match, sub[1], replacement, 1)
+	})
+
+	if html != origHTML {
+		log.Debug().
+			Str("dictID", dictID).
+			Bool("rewritten", true).
+			Msg("Rewrote asset URLs in HTML/CSS")
+	}
+	return html
+}
 func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) (*models.FuzzySearchResult, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -439,27 +569,71 @@ func (e *Engine) GetAsset(dictID, assetPath string) ([]byte, string, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	// Safety: strip leading slash (may come from Gin wildcard param)
+	assetPath = strings.TrimPrefix(assetPath, "/")
+
 	dict, exists := e.dicts[dictID]
 	if !exists {
 		return nil, "", fmt.Errorf("dictionary not found: %s", dictID)
 	}
 
-	if dict.mddDict == nil {
-		return nil, "", fmt.Errorf("dictionary has no media files")
+	// 1. Try MDD first
+	if dict.mddDict != nil {
+		normalizedPath := assetPath
+		// Normalize: convert / to \ and ensure leading \
+		if !strings.HasPrefix(normalizedPath, "\\") {
+			normalizedPath = "\\" + strings.ReplaceAll(normalizedPath, "/", "\\")
+		} else {
+			normalizedPath = strings.ReplaceAll(normalizedPath, "/", "\\")
+		}
+		data, err := dict.mddDict.AssetResolver().Read(normalizedPath)
+		if err == nil {
+			mimeType := GetMimeType(assetPath)
+			return data, mimeType, nil
+		}
+		// Retry without leading backslash (some MDD files don't use it)
+		withoutLeadingSlash := strings.TrimPrefix(normalizedPath, "\\")
+		if withoutLeadingSlash != normalizedPath {
+			data, err = dict.mddDict.AssetResolver().Read(withoutLeadingSlash)
+			if err == nil {
+				mimeType := GetMimeType(assetPath)
+				return data, mimeType, nil
+			}
+		}
 	}
 
-	// Read asset from MDD using AssetResolver
-	// Normalize path: MDD keys use backslash prefix like \image\foo.png
-	normalizedPath := assetPath
-	if !strings.HasPrefix(normalizedPath, "\\") {
-		normalizedPath = "\\" + strings.ReplaceAll(normalizedPath, "/", "\\")
+	// 2. Try resource subdirectory (e.g. dictDir/DictName/style.css)
+	if dict.resDir != "" {
+		fsPath := filepath.Join(e.dictDir, dict.resDir, filepath.FromSlash(assetPath))
+		if data, err := os.ReadFile(fsPath); err == nil {
+			mimeType := GetMimeType(assetPath)
+			return data, mimeType, nil
+		}
 	}
 
-	data, err := dict.mddDict.AssetResolver().Read(normalizedPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read asset: %w", err)
+	// 3. Try dictDir root (e.g. dictDir/style.css)
+	fsPath := filepath.Join(e.dictDir, filepath.FromSlash(assetPath))
+	if data, err := os.ReadFile(fsPath); err == nil {
+		mimeType := GetMimeType(assetPath)
+		return data, mimeType, nil
 	}
 
-	mimeType := GetMimeType(assetPath)
-	return data, mimeType, nil
+	return nil, "", fmt.Errorf("asset not found: %s", assetPath)
+}
+
+// DebugLogAssetMiss logs when an asset lookup fails (for troubleshooting dictionary styling).
+func (e *Engine) DebugLogAssetMiss(dictID, assetPath string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	dict, exists := e.dicts[dictID]
+	if !exists {
+		log.Debug().Str("dictID", dictID).Str("assetPath", assetPath).Msg("Asset miss: dict not found")
+		return
+	}
+	log.Debug().
+		Str("dictID", dictID).
+		Str("assetPath", assetPath).
+		Bool("hasMdd", dict.mddDict != nil).
+		Str("resDir", dict.resDir).
+		Msg("Asset miss: not found in MDD, resDir, or dictDir")
 }

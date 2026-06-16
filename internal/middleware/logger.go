@@ -26,21 +26,26 @@ func Logger() gin.HandlerFunc {
 		// Process request
 		c.Next()
 
-		// Calculate duration
-		duration := time.Since(start)
+			// Calculate duration
+			duration := time.Since(start)
 
-		// Log request
-		log.Info().
-			Str("method", c.Request.Method).
-			Str("path", c.Request.URL.Path).
-			Str("query", c.Request.URL.RawQuery).
-			Str("ip", c.ClientIP()).
-			Str("user_agent", c.Request.UserAgent()).
-			Int("status", c.Writer.Status()).
-			Int("size", c.Writer.Size()).
-			Dur("duration", duration).
-			Str("request_id", requestID).
-			Msg("Request processed")
+			// Use debug level for health check endpoints to reduce log noise
+			event := log.Info()
+			if c.Request.URL.Path == "/api/v1/health" {
+				event = log.Debug()
+			}
+
+			event.
+				Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).
+				Str("query", c.Request.URL.RawQuery).
+				Str("ip", c.ClientIP()).
+				Str("user_agent", c.Request.UserAgent()).
+				Int("status", c.Writer.Status()).
+				Int("size", c.Writer.Size()).
+				Dur("duration", duration).
+				Str("request_id", requestID).
+				Msg("Request processed")
 	}
 }
 

@@ -9,6 +9,12 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
+        /* Dictionary content rendering — no Tailwind prose interference */
+        .dict-content { font-size: 16px; line-height: 1.6; word-wrap: break-word; overflow-wrap: break-word; }
+        .dict-content img { max-width: 100%; height: auto; }
+        .dict-content a { color: #2563eb; text-decoration: underline; }
+        .dict-content table { border-collapse: collapse; }
+        .dict-content td, .dict-content th { padding: 4px 8px; border: 1px solid #d1d5db; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
@@ -134,7 +140,7 @@
                         <h3 class="text-lg font-semibold text-gray-900" x-text="result.dict_name"></h3>
                         <span class="text-sm text-gray-500" x-text="result.dict_id"></span>
                     </div>
-                    <div class="prose max-w-none" x-html="sanitizeHtml(result.html)"></div>
+                    <div class="dict-content max-w-none" x-html="sanitizeHtml(result.html)"></div>
                     <div x-show="result.has_audio" class="mt-4">
                         <button
                             @click="playAudio(result.audio_url)"
@@ -325,8 +331,11 @@
                 sanitizeHtml(html) {
                     if (!html) return '';
                     return DOMPurify.sanitize(html, {
-                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote'],
-                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face']
+                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote', 'style', 'link', 'dl', 'dt', 'dd', 'pre', 'code', 'em', 'strong', 'small', 'mark', 'abbr', 'ruby', 'rt', 'rp', 'bdo'],
+                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face', 'rel', 'media', 'charset', 'cellpadding', 'cellspacing', 'border', 'align', 'valign', 'bgcolor', 'nowrap', 'colspan', 'rowspan', 'scope', 'id', 'name', 'onclick'],
+                        ADD_ATTR: ['target'],
+                        FORCE_BODY: true,
+                        ALLOW_DATA_ATTR: true
                     });
                 },
 

@@ -94,6 +94,7 @@ type ChangePasswordRequest struct {
 
 // AdminResetPasswordRequest represents the request for an admin to reset a user's password
 type AdminResetPasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
