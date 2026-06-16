@@ -18,6 +18,13 @@ import (
 	"github.com/HW618/mdict-server/internal/store"
 )
 
+// isPathSafe checks that resolvedPath stays within baseDir, preventing path traversal.
+func isPathSafe(baseDir, resolvedPath string) bool {
+	cleanBase := filepath.Clean(baseDir)
+	cleanResolved := filepath.Clean(resolvedPath)
+	return strings.HasPrefix(cleanResolved, cleanBase+string(os.PathSeparator)) || cleanResolved == cleanBase
+}
+
 // Engine manages dictionary loading and querying
 type Engine struct {
 	mu         sync.RWMutex
@@ -615,14 +622,19 @@ func (e *Engine) GetAsset(dictID, assetPath string) ([]byte, string, error) {
 	// 2. Try resource subdirectory (e.g. dictDir/DictName/style.css)
 	if dict.resDir != "" {
 		fsPath := filepath.Join(e.dictDir, dict.resDir, filepath.FromSlash(assetPath))
-		if data, err := os.ReadFile(fsPath); err == nil {
-			mimeType := GetMimeType(assetPath)
-			return data, mimeType, nil
+		if isPathSafe(e.dictDir, fsPath) {
+			if data, err := os.ReadFile(fsPath); err == nil {
+				mimeType := GetMimeType(assetPath)
+				return data, mimeType, nil
+			}
 		}
 	}
 
 	// 3. Try dictDir root (e.g. dictDir/style.css)
 	fsPath := filepath.Join(e.dictDir, filepath.FromSlash(assetPath))
+	if !isPathSafe(e.dictDir, fsPath) {
+		return nil, "", fmt.Errorf("asset not found: %s", assetPath)
+	}
 	if data, err := os.ReadFile(fsPath); err == nil {
 		mimeType := GetMimeType(assetPath)
 		return data, mimeType, nil

@@ -338,6 +338,9 @@
                             keyword: this.searchWord,
                             page_size: '10'
                         });
+                        if (this.selectedDict) {
+                            params.append('dict_id', this.selectedDict);
+                        }
 
                         const response = await this.fetchWithAuth(`/api/v1/search/fuzzy?${params}`);
 
@@ -367,7 +370,8 @@
                 },
 
                 removeFromHistory(word) {
-                    this.searchHistory = this.searchHistory.filter(w => w !== word);
+                    const lower = word.toLowerCase();
+                    this.searchHistory = this.searchHistory.filter(w => w.toLowerCase() !== lower);
                     localStorage.setItem('search_history', JSON.stringify(this.searchHistory));
                 },
 
@@ -379,8 +383,8 @@
                 sanitizeHtml(html) {
                     if (!html) return '';
                     return DOMPurify.sanitize(html, {
-                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote', 'style', 'link', 'dl', 'dt', 'dd', 'pre', 'code', 'em', 'strong', 'small', 'mark', 'abbr', 'ruby', 'rt', 'rp', 'bdo'],
-                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face', 'rel', 'media', 'charset', 'cellpadding', 'cellspacing', 'border', 'align', 'valign', 'bgcolor', 'nowrap', 'colspan', 'rowspan', 'scope', 'id', 'name', 'onclick'],
+                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote', 'style', 'dl', 'dt', 'dd', 'pre', 'code', 'em', 'strong', 'small', 'mark', 'abbr', 'ruby', 'rt', 'rp', 'bdo'],
+                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face', 'cellpadding', 'cellspacing', 'border', 'align', 'valign', 'bgcolor', 'nowrap', 'colspan', 'rowspan', 'scope', 'id', 'name'],
                         ADD_ATTR: ['target'],
                         FORCE_BODY: true,
                         ALLOW_DATA_ATTR: true

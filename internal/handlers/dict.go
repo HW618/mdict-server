@@ -20,6 +20,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// safePath ensures the resolved path stays within baseDir, preventing path traversal.
+func safePath(baseDir, userPath string) (string, error) {
+	cleanBase := filepath.Clean(baseDir)
+	resolved := filepath.Clean(filepath.Join(cleanBase, userPath))
+	if !strings.HasPrefix(resolved, cleanBase+string(os.PathSeparator)) && resolved != cleanBase {
+		return "", fmt.Errorf("path traversal detected: %s escapes %s", userPath, cleanBase)
+	}
+	return resolved, nil
+}
+
 // DictHandler handles dictionary endpoints
 type DictHandler struct {
 	engine         *dict.Engine
@@ -491,7 +501,7 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 	var chunkIndex int
-	if _, err := fmt.Sscanf(chunkIndexStr, "%d", &chunkIndex); err != nil {
+	if _, err := fmt.Sscanf(chunkIndexStr, "%d", &chunkIndex); err != nil || chunkIndex < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid chunk_index", "data": nil})
 		return
 	}
@@ -502,6 +512,11 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 	upload := val.(*chunkedUpload)
+
+	if chunkIndex >= upload.TotalParts {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "chunk_index out of range", "data": nil})
+		return
+	}
 
 	file, _, err := c.Request.FormFile("chunk")
 	if err != nil {
@@ -678,11 +693,15 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	})
 }
 
-// cleanupChunks removes all temp chunk files for an upload
+// cleanupChunks removes all temp chunk files for an upload.
+// Must be called with upload.mu held to avoid data race on upload.chunks.
 func (h *DictHandler) cleanupChunks(upload *chunkedUpload) {
+	upload.mu.Lock()
+	defer upload.mu.Unlock()
 	for _, path := range upload.chunks {
 		_ = os.Remove(path)
 	}
+	upload.chunks = make(map[int]string)
 	// Try removing the .uploads directory if empty
 	_ = os.Remove(filepath.Join(h.dictDir, ".uploads"))
 }
@@ -775,8 +794,12 @@ func (h *DictHandler) Download(c *gin.Context) {
 		return
 	}
 
-	// Build file path
-	filePath := filepath.Join(h.dictDir, dictInfo.Filename)
+	// Build file path (sanitize against path traversal)
+	filePath, err := safePath(h.dictDir, dictInfo.Filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid file path", "data": nil})
+		return
+	}
 
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -791,7 +814,7 @@ func (h *DictHandler) Download(c *gin.Context) {
 	// Set headers for file download
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", dictInfo.Filename))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", strings.ReplaceAll(filepath.Base(dictInfo.Filename), `"`, `\"`)))
 	c.Header("Content-Type", "application/octet-stream")
 
 	c.File(filePath)
@@ -815,17 +838,21 @@ func (h *DictHandler) Delete(c *gin.Context) {
 	// Remove from engine
 	h.engine.Unload(dictID)
 
-	// Delete file
-	mdxPath := filepath.Join(h.dictDir, dictInfo.Filename)
-	if err := os.Remove(mdxPath); err != nil && !os.IsNotExist(err) {
+	// Delete file (sanitize against path traversal)
+	mdxPath, pathErr := safePath(h.dictDir, dictInfo.Filename)
+	if pathErr != nil {
+		log.Error().Err(pathErr).Msg("Invalid dictionary file path")
+	} else if err := os.Remove(mdxPath); err != nil && !os.IsNotExist(err) {
 		log.Error().Err(err).Msg("Failed to delete dictionary file")
 	}
 
 	// Delete .mdd file if exists
 	if dictInfo.HasMdd {
 		mddFilename := strings.TrimSuffix(dictInfo.Filename, ".mdx") + ".mdd"
-		mddPath := filepath.Join(h.dictDir, mddFilename)
-		if err := os.Remove(mddPath); err != nil && !os.IsNotExist(err) {
+		mddPath, mddPathErr := safePath(h.dictDir, mddFilename)
+		if mddPathErr != nil {
+			log.Error().Err(mddPathErr).Msg("Invalid mdd file path")
+		} else if err := os.Remove(mddPath); err != nil && !os.IsNotExist(err) {
 			log.Error().Err(err).Msg("Failed to delete mdd file")
 		}
 	}

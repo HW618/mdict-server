@@ -23,7 +23,7 @@ func NewSQLiteStore(dataDir string) (*SQLiteStore, error) {
 
 	dbPath := filepath.Join(dataDir, "mdict.db")
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

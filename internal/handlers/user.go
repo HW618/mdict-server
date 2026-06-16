@@ -418,6 +418,9 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Invalidate all existing refresh tokens so other sessions are logged out
+	_ = h.userStore.DeleteUserRefreshTokens(userID)
+
 	log.Info().
 		Str("audit", "true").
 		Str("action", "password_changed").
@@ -476,6 +479,9 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 		})
 		return
 	}
+
+	// Invalidate all existing refresh tokens for the target user
+	_ = h.userStore.DeleteUserRefreshTokens(userID)
 
 	log.Info().
 		Str("audit", "true").
