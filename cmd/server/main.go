@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize database")
 	}
-	defer sqliteStore.Close()
+	defer func() { _ = sqliteStore.Close() }()
 
 	userStore := store.NewUserStore(sqliteStore)
 	dictStore := store.NewDictStore(sqliteStore)

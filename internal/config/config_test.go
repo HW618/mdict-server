@@ -220,8 +220,8 @@ func TestGetEnv(t *testing.T) {
 	}
 
 	// Test with set env var
-	os.Setenv("TEST_GETENV_VAR", "custom")
-	defer os.Unsetenv("TEST_GETENV_VAR")
+	_ = os.Setenv("TEST_GETENV_VAR", "custom")
+	defer func() { _ = os.Unsetenv("TEST_GETENV_VAR") }()
 	val = getEnv("TEST_GETENV_VAR", "default")
 	if val != "custom" {
 		t.Errorf("expected 'custom', got '%s'", val)
@@ -236,15 +236,15 @@ func TestGetEnvInt(t *testing.T) {
 	}
 
 	// Test with set env var
-	os.Setenv("TEST_GETENVINT_VAR", "123")
-	defer os.Unsetenv("TEST_GETENVINT_VAR")
+	_ = os.Setenv("TEST_GETENVINT_VAR", "123")
+	defer func() { _ = os.Unsetenv("TEST_GETENVINT_VAR") }()
 	val = getEnvInt("TEST_GETENVINT_VAR", 42)
 	if val != 123 {
 		t.Errorf("expected 123, got %d", val)
 	}
 
 	// Test invalid int
-	os.Setenv("TEST_GETENVINT_VAR", "notanint")
+	_ = os.Setenv("TEST_GETENVINT_VAR", "notanint")
 	val = getEnvInt("TEST_GETENVINT_VAR", 42)
 	if val != 42 {
 		t.Errorf("expected default 42 for invalid int, got %d", val)
@@ -257,8 +257,8 @@ func TestGetEnvDuration(t *testing.T) {
 		t.Errorf("expected 2h, got %v", val)
 	}
 
-	os.Setenv("TEST_GETENVDUR_VAR", "30m")
-	defer os.Unsetenv("TEST_GETENVDUR_VAR")
+	_ = os.Setenv("TEST_GETENVDUR_VAR", "30m")
+	defer func() { _ = os.Unsetenv("TEST_GETENVDUR_VAR") }()
 	val = getEnvDuration("TEST_GETENVDUR_VAR", 2*time.Hour)
 	if val != 30*time.Minute {
 		t.Errorf("expected 30m, got %v", val)
@@ -271,8 +271,8 @@ func TestGetEnvSlice(t *testing.T) {
 		t.Errorf("expected [a b], got %v", val)
 	}
 
-	os.Setenv("TEST_GETENVSLICE_VAR", "x,y,z")
-	defer os.Unsetenv("TEST_GETENVSLICE_VAR")
+	_ = os.Setenv("TEST_GETENVSLICE_VAR", "x,y,z")
+	defer func() { _ = os.Unsetenv("TEST_GETENVSLICE_VAR") }()
 	val = getEnvSlice("TEST_GETENVSLICE_VAR", []string{"a"})
 	if len(val) != 3 || val[0] != "x" || val[1] != "y" || val[2] != "z" {
 		t.Errorf("expected [x y z], got %v", val)

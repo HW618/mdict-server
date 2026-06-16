@@ -294,30 +294,30 @@ func (h *DictHandler) Upload(c *gin.Context) {
 
 		tmpFile, err := os.Create(tmpDst)
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to save file"})
 			continue
 		}
 
 		written, copyErr := io.Copy(tmpFile, file)
-		tmpFile.Close()
-		file.Close()
+		_ = tmpFile.Close()
+		_ = file.Close()
 
 		if copyErr != nil {
-			os.Remove(tmpDst)
+			_ = os.Remove(tmpDst)
 			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to write file"})
 			continue
 		}
 
 		// Check file size
 		if h.maxUploadBytes > 0 && written > h.maxUploadBytes {
-			os.Remove(tmpDst)
+			_ = os.Remove(tmpDst)
 			results = append(results, uploadResult{Filename: safeFilename, Error: fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024))})
 			continue
 		}
 
 		if err := os.Rename(tmpDst, dst); err != nil {
-			os.Remove(tmpDst)
+			_ = os.Remove(tmpDst)
 			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to save file"})
 			continue
 		}
@@ -332,9 +332,10 @@ func (h *DictHandler) Upload(c *gin.Context) {
 				reloadPath = rp
 			}
 		}
-		if ext == ".mdx" {
+		switch ext {
+		case ".mdx":
 			needReloadMdx = append(needReloadMdx, reloadPath)
-		} else if ext == ".mdd" {
+		case ".mdd":
 			needReloadMdd = append(needReloadMdd, reloadPath)
 		}
 
@@ -507,11 +508,14 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Chunk data is required", "data": nil})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write chunk to temp file
 	tmpDir := filepath.Join(h.dictDir, ".uploads")
-	os.MkdirAll(tmpDir, 0755)
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to create upload directory", "data": nil})
+		return
+	}
 
 	tmpPath := filepath.Join(tmpDir, fmt.Sprintf("%s_%d.tmp", uploadID, chunkIndex))
 	tmpFile, err := os.Create(tmpPath)
@@ -520,9 +524,9 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 	written, err := io.Copy(tmpFile, file)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to save chunk", "data": nil})
 		return
 	}
@@ -610,31 +614,31 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 		chunkPath := upload.chunks[idx]
 		cf, err := os.Open(chunkPath)
 		if err != nil {
-			outFile.Close()
-			os.Remove(tmpDst)
+			_ = outFile.Close()
+			_ = os.Remove(tmpDst)
 			h.cleanupChunks(upload)
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to read chunk", "data": nil})
 			return
 		}
 		n, err := io.Copy(outFile, cf)
-		cf.Close()
-		os.Remove(chunkPath)
+		_ = cf.Close()
+		_ = os.Remove(chunkPath)
 		if err != nil {
-			outFile.Close()
-			os.Remove(tmpDst)
+			_ = outFile.Close()
+			_ = os.Remove(tmpDst)
 			h.cleanupChunks(upload)
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to assemble chunk", "data": nil})
 			return
 		}
 		totalWritten += n
 	}
-	outFile.Close()
+	_ = outFile.Close()
 
 	// Clean up any remaining chunk temp files and .uploads directory
 	h.cleanupChunks(upload)
 
 	if err := os.Rename(tmpDst, dst); err != nil {
-		os.Remove(tmpDst)
+		_ = os.Remove(tmpDst)
 		// tmpDst is already cleaned; no chunk files remain
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to finalize file", "data": nil})
 		return
@@ -642,11 +646,12 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 
 	// Reload engine with new file
 	ext := strings.ToLower(filepath.Ext(upload.Filename))
-	if ext == ".mdx" {
+	switch ext {
+	case ".mdx":
 		if err := h.engine.LoadAll(); err != nil {
 			log.Error().Err(err).Msg("Failed to reload dictionaries")
 		}
-	} else if ext == ".mdd" {
+	case ".mdd":
 		dictID := h.findDictIDByMdd(upload.Filename)
 		if dictID != "" {
 			if err := h.engine.Reload(dictID); err != nil {
@@ -676,10 +681,10 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 // cleanupChunks removes all temp chunk files for an upload
 func (h *DictHandler) cleanupChunks(upload *chunkedUpload) {
 	for _, path := range upload.chunks {
-		os.Remove(path)
+		_ = os.Remove(path)
 	}
 	// Try removing the .uploads directory if empty
-	os.Remove(filepath.Join(h.dictDir, ".uploads"))
+	_ = os.Remove(filepath.Join(h.dictDir, ".uploads"))
 }
 
 // CleanupExpiredUploads removes chunked upload sessions older than maxAge.

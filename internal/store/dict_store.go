@@ -123,7 +123,7 @@ func (s *DictStore) List() ([]*models.Dictionary, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list dictionaries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var dicts []*models.Dictionary
 	for rows.Next() {
@@ -166,7 +166,7 @@ func (s *DictStore) ListEnabled() ([]*models.Dictionary, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list enabled dictionaries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var dicts []*models.Dictionary
 	for rows.Next() {

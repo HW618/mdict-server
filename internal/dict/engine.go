@@ -71,7 +71,7 @@ func (e *Engine) LoadAll() error {
 
 	// Recursively scan for .mdx files
 	var mdxFiles []string
-	filepath.WalkDir(e.dictDir, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(e.dictDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
