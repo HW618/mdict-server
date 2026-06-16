@@ -3,7 +3,9 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
+	markdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/dict"
 )
@@ -51,6 +53,17 @@ func (h *SearchHandler) Search(c *gin.Context) {
 			"data":    nil,
 		})
 		return
+	}
+
+	// If markdown=true, convert HTML to Markdown and omit the HTML field
+	if strings.ToLower(c.Query("markdown")) == "true" {
+		for i := range result.Results {
+			md, err := markdown.ConvertString(result.Results[i].HTML)
+			if err == nil {
+				result.Results[i].Markdown = strings.TrimSpace(md)
+			}
+			result.Results[i].HTML = "" // omit from JSON via omitempty
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

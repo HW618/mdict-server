@@ -89,7 +89,8 @@ type SearchResult struct {
 type DictResult struct {
 	DictID   string `json:"dict_id"`
 	DictName string `json:"dict_name"`
-	HTML     string `json:"html"`
+	HTML     string `json:"html,omitempty"`
+	Markdown string `json:"markdown,omitempty"`
 	HasAudio bool   `json:"has_audio"`
 	AudioURL string `json:"audio_url,omitempty"`
 }
