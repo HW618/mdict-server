@@ -432,19 +432,6 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 // AdminResetPassword handles an admin resetting a user's password
 func (h *UserHandler) AdminResetPassword(c *gin.Context) {
-	operatorID := c.GetString("userID")
-
-	// Validate operator's current password
-	operator, err := h.userStore.GetByID(operatorID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    50002,
-			"message": "Failed to verify operator",
-			"data":    nil,
-		})
-		return
-	}
-
 	userID := c.Param("id")
 
 	var req models.AdminResetPasswordRequest
@@ -457,17 +444,7 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Verify operator's old password
-	if err := bcrypt.CompareHashAndPassword([]byte(operator.Password), []byte(req.OldPassword)); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    40301,
-			"message": "Current password is incorrect",
-			"data":    nil,
-		})
-		return
-	}
-
-	// Check if target user exists
+	// Check if user exists
 	user, err := h.userStore.GetByID(userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"fmt"
 	"net/http"
@@ -201,216 +199,25 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	form := c.Request.MultipartForm
-	files := form.File["files"]
-	if len(files) == 0 {
-		// Fallback: single file field "file"
-		singleFile, hasFile := form.File["file"]
-		if !hasFile || len(singleFile) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    40001,
-				"message": "No files provided",
-				"data":    nil,
-			})
-			return
-		}
-		files = singleFile
-	}
-
-	type uploadResult struct {
-		Filename string `json:"filename"`
-		FileSize int64  `json:"file_size"`
-		Error    string `json:"error,omitempty"`
-	}
-
-	// Parse relative_path fields for folder uploads (one per file, same order)
-	relativePaths := form.Value["relative_path"]
-
-	var results []uploadResult
-	var needReloadMdx []string // .mdx filenames that need loading
-	var needReloadMdd []string // .mdd filenames whose .mdx needs reloading
-
-	for i, header := range files {
-		safeFilename := filepath.Base(header.Filename)
-		if safeFilename == "." || safeFilename == "/" {
-			results = append(results, uploadResult{Filename: header.Filename, Error: "Invalid filename"})
-			continue
-		}
-
-		ext := strings.ToLower(filepath.Ext(safeFilename))
-		if !isAllowedUploadExt(ext) {
-			results = append(results, uploadResult{Filename: safeFilename, Error: "File type not allowed"})
-			continue
-		}
-
-		// Check if .mdx already exists (use full relative path for subdirectory uploads)
-		if ext == ".mdx" {
-			checkFilename := safeFilename
-			if i < len(relativePaths) && relativePaths[i] != "" {
-				rp, rpErr := sanitizeRelativePath(relativePaths[i])
-				if rpErr == nil {
-					checkFilename = rp
-				}
-			}
-			exists, err := h.dictStore.ExistsByFilename(checkFilename)
-			if err != nil {
-				results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to check existence"})
-				continue
-			}
-			if exists {
-				results = append(results, uploadResult{Filename: safeFilename, Error: "Dictionary already exists"})
-				continue
-			}
-		}
-
-		// Open uploaded file
-		file, err := header.Open()
-		if err != nil {
-			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to read upload"})
-			continue
-		}
-
-		// Determine destination: use relative_path for folder uploads if available
-		var dst string
-		if i < len(relativePaths) && relativePaths[i] != "" {
-			relPath, err := sanitizeRelativePath(relativePaths[i])
-			if err != nil {
-				results = append(results, uploadResult{Filename: header.Filename, Error: "Unsafe path"})
-				continue
-			}
-			dst = filepath.Join(h.dictDir, relPath)
-		} else {
-			dst = filepath.Join(h.dictDir, safeFilename)
-		}
-
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to create directory"})
-			continue
-		}
-
-		// Stream to temp file then rename atomically
-		tmpDst := dst + ".tmp"
-
-		tmpFile, err := os.Create(tmpDst)
-		if err != nil {
-			file.Close()
-			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to save file"})
-			continue
-		}
-
-		written, copyErr := io.Copy(tmpFile, file)
-		tmpFile.Close()
-		file.Close()
-
-		if copyErr != nil {
-			os.Remove(tmpDst)
-			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to write file"})
-			continue
-		}
-
-		// Check file size
-		if h.maxUploadBytes > 0 && written > h.maxUploadBytes {
-			os.Remove(tmpDst)
-			results = append(results, uploadResult{Filename: safeFilename, Error: fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024))})
-			continue
-		}
-
-		if err := os.Rename(tmpDst, dst); err != nil {
-			os.Remove(tmpDst)
-			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to save file"})
-			continue
-		}
-
-		results = append(results, uploadResult{Filename: safeFilename, FileSize: written})
-
-		// Use the full relative path for reload lookup (needed for subdirectory uploads)
-		reloadPath := safeFilename
-		if i < len(relativePaths) && relativePaths[i] != "" {
-			rp, rpErr := sanitizeRelativePath(relativePaths[i])
-			if rpErr == nil {
-				reloadPath = rp
-			}
-		}
-		if ext == ".mdx" {
-			needReloadMdx = append(needReloadMdx, reloadPath)
-		} else if ext == ".mdd" {
-			needReloadMdd = append(needReloadMdd, reloadPath)
-		}
-
-		log.Info().
-			Str("audit", "true").
-			Str("action", "dict_uploaded").
-			Str("filename", safeFilename).
-			Int64("file_size", written).
-			Str("operator_id", c.GetString("userID")).
-			Msg("File uploaded")
-	}
-
-	// Load new .mdx dictionaries
-	if len(needReloadMdx) > 0 {
-		if err := h.engine.LoadAll(); err != nil {
-			log.Error().Err(err).Msg("Failed to reload dictionaries after upload")
-		}
-	}
-
-	// For uploaded .mdd files, reload the corresponding .mdx dictionary
-	// so it picks up the new resource file
-	for _, mddFilename := range needReloadMdd {
-		dictID := h.findDictIDByMdd(mddFilename)
-		if dictID != "" {
-			if err := h.engine.Reload(dictID); err != nil {
-				log.Error().Err(err).Str("dict_id", dictID).Msg("Failed to reload dictionary after .mdd upload")
-			} else {
-				log.Info().Str("dict_id", dictID).Str("mdd", mddFilename).Msg("Reloaded dictionary after .mdd upload")
-			}
-		}
-	}
-
-	// Check if any file succeeded
-	successCount := 0
-	for _, r := range results {
-		if r.Error == "" {
-			successCount++
-		}
-	}
-
-	message := fmt.Sprintf("%d/%d files uploaded successfully", successCount, len(files))
-	if successCount == 0 {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
-			"message": message,
-			"data":    results,
+			"message": "File is required",
+			"data":    nil,
 		})
 		return
 	}
+	defer file.Close()
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": message,
-		"data":    results,
-	})
-}
-
-// UpdateTitle updates dictionary title
-// UploadInit starts a chunked upload session
-type uploadInitRequest struct {
-	Filename     string `json:"filename" binding:"required"`
-	RelativePath string `json:"relative_path"`
-	FileSize     int64  `json:"file_size" binding:"required"`
-	ChunkSize    int64  `json:"chunk_size" binding:"required"`
-}
-
-func (h *DictHandler) UploadInit(c *gin.Context) {
-	var req uploadInitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid request body", "data": nil})
-		return
-	}
-
-	safeFilename := filepath.Base(req.Filename)
+	// Sanitize filename to prevent path traversal
+	safeFilename := filepath.Base(header.Filename)
 	if safeFilename == "." || safeFilename == "/" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid filename", "data": nil})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid filename",
+			"data":    nil,
+		})
 		return
 	}
 
@@ -449,126 +256,50 @@ func (h *DictHandler) UploadInit(c *gin.Context) {
 		}
 	}
 
-	totalParts := int((req.FileSize + req.ChunkSize - 1) / req.ChunkSize)
+	// Stream file to disk via temp file, then rename atomically
+	dst := filepath.Join(h.dictDir, safeFilename)
+	tmpDst := dst + ".tmp"
 
-	// Generate upload ID
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%s-%d-%d", safeFilename, req.FileSize, time.Now().UnixNano())))
-	uploadID := hex.EncodeToString(hash[:16])
-
-	upload := &chunkedUpload{
-		Filename:     safeFilename,
-		RelativePath: relativePath,
-		TotalSize:    req.FileSize,
-		ChunkSize:    req.ChunkSize,
-		TotalParts:   totalParts,
-		CreatedAt:    time.Now(),
-		chunks:       make(map[int]string),
-	}
-	h.uploads.Store(uploadID, upload)
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Upload initialized",
-		"data": gin.H{
-			"upload_id":   uploadID,
-			"total_parts": totalParts,
-		},
-	})
-}
-
-// UploadChunk receives a single chunk of a chunked upload
-func (h *DictHandler) UploadChunk(c *gin.Context) {
-	uploadID := c.PostForm("upload_id")
-	if uploadID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "upload_id is required", "data": nil})
-		return
-	}
-
-	chunkIndexStr := c.PostForm("chunk_index")
-	if chunkIndexStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "chunk_index is required", "data": nil})
-		return
-	}
-	var chunkIndex int
-	if _, err := fmt.Sscanf(chunkIndexStr, "%d", &chunkIndex); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid chunk_index", "data": nil})
-		return
-	}
-
-	val, ok := h.uploads.Load(uploadID)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"code": 40401, "message": "Upload session not found or expired", "data": nil})
-		return
-	}
-	upload := val.(*chunkedUpload)
-
-	file, _, err := c.Request.FormFile("chunk")
+	tmpFile, err := os.Create(tmpDst)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Chunk data is required", "data": nil})
+		log.Error().Err(err).Msg("Failed to create temp file")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to save file",
+			"data":    nil,
+		})
 		return
 	}
-	defer file.Close()
+	defer os.Remove(tmpDst)
 
-	// Write chunk to temp file
-	tmpDir := filepath.Join(h.dictDir, ".uploads")
-	os.MkdirAll(tmpDir, 0755)
-
-	tmpPath := filepath.Join(tmpDir, fmt.Sprintf("%s_%d.tmp", uploadID, chunkIndex))
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to save chunk", "data": nil})
-		return
-	}
 	written, err := io.Copy(tmpFile, file)
 	tmpFile.Close()
 	if err != nil {
-		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to save chunk", "data": nil})
+		log.Error().Err(err).Msg("Failed to write uploaded file")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to save file",
+			"data":    nil,
+		})
 		return
 	}
 
-	upload.mu.Lock()
-	upload.chunks[chunkIndex] = tmpPath
-	received := len(upload.chunks)
-	upload.mu.Unlock()
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Chunk received",
-		"data": gin.H{
-			"chunk_index":  chunkIndex,
-			"chunk_size":   written,
-			"received":     received,
-			"total_parts":  upload.TotalParts,
-		},
-	})
-}
-
-// UploadComplete finalizes a chunked upload by assembling all chunks
-type uploadCompleteRequest struct {
-	UploadID string `json:"upload_id" binding:"required"`
-}
-
-func (h *DictHandler) UploadComplete(c *gin.Context) {
-	var req uploadCompleteRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid request body", "data": nil})
+	// Check file size limit after streaming
+	if h.maxUploadBytes > 0 && written > h.maxUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"code":    41301,
+			"message": fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024)),
+			"data":    nil,
+		})
 		return
 	}
 
-	val, ok := h.uploads.LoadAndDelete(req.UploadID)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"code": 40401, "message": "Upload session not found", "data": nil})
-		return
-	}
-	upload := val.(*chunkedUpload)
-
-	// Verify all chunks received
-	if len(upload.chunks) != upload.TotalParts {
-		h.cleanupChunks(upload)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    40001,
-			"message": fmt.Sprintf("Missing chunks: got %d, expected %d", len(upload.chunks), upload.TotalParts),
+	// Atomically move temp file to final destination
+	if err := os.Rename(tmpDst, dst); err != nil {
+		log.Error().Err(err).Msg("Failed to rename temp file")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to save file",
 			"data":    nil,
 		})
 		return
@@ -658,8 +389,8 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	log.Info().
 		Str("audit", "true").
 		Str("action", "dict_uploaded").
-		Str("filename", upload.Filename).
-		Int64("file_size", totalWritten).
+		Str("filename", safeFilename).
+		Int64("file_size", written).
 		Str("operator_id", c.GetString("userID")).
 		Msg("Dictionary file uploaded (chunked)")
 
@@ -700,6 +431,30 @@ func (h *DictHandler) CleanupExpiredUploads(maxAge time.Duration) {
 	})
 }
 
+func (h *DictHandler) UpdateTitle(c *gin.Context) {
+	dictID := c.Param("id")
+
+	var req models.DictTitleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid request body",
+			"data":    nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "File uploaded successfully",
+		"data": gin.H{
+			"filename":  safeFilename,
+			"file_size": written,
+		},
+	})
+}
+
+// UpdateTitle updates dictionary title
 func (h *DictHandler) UpdateTitle(c *gin.Context) {
 	dictID := c.Param("id")
 

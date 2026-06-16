@@ -106,10 +106,8 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware.RequireAuth())
 		{
-			auth.POST("/auth/logout", authHandler.Logout)
-			auth.PUT("/users/me/password", userHandler.ChangePassword)
-			auth.GET("/users/me", userHandler.GetCurrentUser)
-			auth.GET("/assets/:id/*path", dictHandler.GetAsset)
+		auth.POST("/auth/logout", authHandler.Logout)
+		auth.PUT("/users/me/password", userHandler.ChangePassword)
 		}
 
 		// API access routes (JWT or API token)
