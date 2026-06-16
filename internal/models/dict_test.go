@@ -115,8 +115,8 @@ func TestSearchResultStructure(t *testing.T) {
 func TestFuzzySearchResultStructure(t *testing.T) {
 	result := FuzzySearchResult{
 		Items: []FuzzyItem{
-			{Word: "hello", DictID: "abc12345", DictName: "Oxford"},
-			{Word: "help", DictID: "abc12345", DictName: "Oxford"},
+			{Word: "hello"},
+			{Word: "help"},
 		},
 		Total:      2,
 		Page:       1,
