@@ -25,6 +25,7 @@ type Engine struct {
 	dictDir    string
 	dictStore  *store.DictStore
 	sanitizer  *bluemonday.Policy
+	wordIndex  []string // global sorted deduplicated word list for fast prefix search
 }
 
 // LoadedDict represents a loaded dictionary with its parsed data
@@ -107,6 +108,10 @@ func (e *Engine) LoadAll() error {
 	}
 
 	log.Info().Int("count", loadedCount).Msg("Loaded dictionaries")
+
+	// Rebuild global word index after loading
+	e.rebuildWordIndex()
+
 	return nil
 }
 
@@ -134,6 +139,36 @@ func (e *Engine) disableOrphans() error {
 		}
 	}
 	return nil
+}
+
+// rebuildWordIndex rebuilds the global sorted deduplicated word list from all loaded dictionaries.
+// Must be called with e.mu held.
+func (e *Engine) rebuildWordIndex() {
+	wordSet := make(map[string]struct{})
+	for _, dict := range e.dicts {
+		if !dict.Info.IsEnabled {
+			continue
+		}
+		entries, err := dict.mdxDict.ExportEntries()
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			w := strings.TrimSpace(entry.Keyword)
+			if w != "" {
+				wordSet[w] = struct{}{}
+			}
+		}
+	}
+
+	words := make([]string, 0, len(wordSet))
+	for w := range wordSet {
+		words = append(words, w)
+	}
+	sort.Strings(words)
+	e.wordIndex = words
+
+	log.Info().Int("unique_words", len(words)).Msg("Global word index rebuilt")
 }
 
 // loadDict loads a single dictionary file
@@ -258,7 +293,13 @@ func (e *Engine) Reload(dictID string) error {
 	delete(e.dicts, dictID)
 
 	// Reload
-	return e.loadDict(loaded.Info.Filename)
+	if err := e.loadDict(loaded.Info.Filename); err != nil {
+		return err
+	}
+
+	// Rebuild global word index after reload
+	e.rebuildWordIndex()
+	return nil
 }
 
 // Unload removes a dictionary from memory
@@ -451,62 +492,9 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 		return nil, fmt.Errorf("keyword must be at least 2 characters")
 	}
 
-	// Collect matches from all dictionaries
-	type wordMatch struct {
-		word     string
-		dictID   string
-		dictName string
-	}
-
-	matches := []wordMatch{}
-
-	for id, dict := range e.dicts {
-		// Filter by dictID if specified
-		if dictID != "" && id != dictID {
-			continue
-		}
-
-		// Skip disabled dictionaries
-		if !dict.Info.IsEnabled {
-			continue
-		}
-
-		// Use fuzzy store for search (limit to get enough results for pagination)
-		hits, err := dict.fuzzyStore.Search(dict.dictName, keyword, 1000)
-		if err != nil || len(hits) == 0 {
-			// Fallback: prefix-match scan from exported entries
-			if err != nil {
-				log.Warn().Err(err).Str("dict", id).Str("keyword", keyword).Msg("Fuzzy store miss, using prefix fallback")
-			}
-			entries, exportErr := dict.mdxDict.ExportEntries()
-			if exportErr != nil {
-				log.Warn().Err(exportErr).Str("dict", id).Msg("Failed to export entries for fallback")
-				continue
-			}
-			for _, entry := range entries {
-				if strings.HasPrefix(strings.ToLower(entry.Keyword), keyword) {
-					matches = append(matches, wordMatch{
-						word:     entry.Keyword,
-						dictID:   id,
-						dictName: dict.Info.Title,
-					})
-				}
-			}
-		} else {
-			for _, hit := range hits {
-				matches = append(matches, wordMatch{
-					word:     hit.Entry.Keyword,
-					dictID:   id,
-					dictName: dict.Info.Title,
-				})
-			}
-		}
-	}
-
-	// Sort matches alphabetically for consistent results
-	sort.Slice(matches, func(i, j int) bool {
-		return strings.ToLower(matches[i].word) < strings.ToLower(matches[j].word)
-	})
+	// Binary search on the global sorted word index for prefix matches
+	// Find the first word that starts with the keyword (case-insensitive)
+	matches := e.prefixSearch(keyword)
 
 	// Calculate pagination
 	total := len(matches)
@@ -524,14 +512,10 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 		end = total
 	}
 
-	// Build result
-	items := []models.FuzzyItem{}
-	for _, match := range matches[start:end] {
-		items = append(items, models.FuzzyItem{
-			Word:     match.word,
-			DictID:   match.dictID,
-			DictName: match.dictName,
-		})
+	// Build result — just words, no per-dictionary info
+	items := make([]models.FuzzyItem, 0, end-start)
+	for _, word := range matches[start:end] {
+		items = append(items, models.FuzzyItem{Word: word})
 	}
 
 	return &models.FuzzySearchResult{
@@ -541,6 +525,32 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 		PageSize:   pageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+// prefixSearch uses binary search on the global word index to find all words
+// whose lowercase form starts with the given keyword prefix.
+// Returns words in sorted order. O(log n + k) where k = number of matches.
+func (e *Engine) prefixSearch(keyword string) []string {
+	idx := e.wordIndex
+	if len(idx) == 0 {
+		return nil
+	}
+
+	// Find the leftmost position where keyword could be a prefix
+	lo := sort.Search(len(idx), func(i int) bool {
+		return strings.ToLower(idx[i]) >= keyword
+	})
+
+	// Collect all words starting with keyword
+	var matches []string
+	for i := lo; i < len(idx); i++ {
+		if !strings.HasPrefix(strings.ToLower(idx[i]), keyword) {
+			break
+		}
+		matches = append(matches, idx[i])
+	}
+
+	return matches
 }
 
 // GetDict returns a loaded dictionary

@@ -85,8 +85,6 @@ func (h *SearchHandler) FuzzySearch(c *gin.Context) {
 		return
 	}
 
-	dictID := c.Query("dict_id")
-
 	// Parse pagination parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
@@ -98,7 +96,7 @@ func (h *SearchHandler) FuzzySearch(c *gin.Context) {
 		pageSize = 20
 	}
 
-	result, err := h.engine.FuzzySearch(keyword, dictID, page, pageSize)
+	result, err := h.engine.FuzzySearch(keyword, "", page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50001,

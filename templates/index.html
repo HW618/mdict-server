@@ -99,13 +99,12 @@
                         x-cloak
                         class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto"
                     >
-                        <template x-for="item in suggestions" :key="item.word + item.dict_id">
+                        <template x-for="item in suggestions" :key="item.word">
                             <button
                                 @click="selectSuggestion(item.word)"
-                                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center justify-between"
+                                class="w-full px-4 py-2 text-left hover:bg-gray-100"
                             >
                                 <span x-text="item.word"></span>
-                                <span class="text-xs text-gray-400" x-text="item.dict_name"></span>
                             </button>
                         </template>
                     </div>
@@ -118,6 +117,22 @@
                 >
                     查询
                 </button>
+            </div>
+        </div>
+
+        <!-- Search History -->
+        <div x-show="searchHistory.length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-medium text-gray-500">搜索历史</h3>
+                <button @click="clearHistory()" class="text-xs text-gray-400 hover:text-red-500 transition-colors">清除全部</button>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <template x-for="word in searchHistory" :key="word">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-700 hover:bg-blue-100 hover:text-blue-700 cursor-pointer transition-colors group">
+                        <span @click="selectSuggestion(word)" x-text="word" class="cursor-pointer"></span>
+                        <button @click.stop="removeFromHistory(word)" class="ml-1.5 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
+                    </span>
+                </template>
             </div>
         </div>
 
@@ -226,6 +241,8 @@
                 },
                 loginError: null,
                 fuzzySearchTimeout: null,
+                searchHistory: [],
+                maxHistorySize: 50,
 
                 async init() {
                     // Check for saved token
@@ -243,6 +260,16 @@
 
                     // Load dictionaries
                     await this.loadDicts();
+
+                    // Load search history
+                    const saved = localStorage.getItem('search_history');
+                    if (saved) {
+                        try {
+                            this.searchHistory = JSON.parse(saved);
+                        } catch (e) {
+                            this.searchHistory = [];
+                        }
+                    }
                 },
 
                 async loadDicts() {
@@ -275,6 +302,9 @@
 
                         if (response.code === 0) {
                             this.results = response.data.results || [];
+                            if (this.results.length > 0) {
+                                this.addToHistory(this.searchWord.trim());
+                            }
                         } else if (response.code === 40401) {
                             this.results = [];
                         } else {
@@ -308,9 +338,6 @@
                             keyword: this.searchWord,
                             page_size: '10'
                         });
-                        if (this.selectedDict) {
-                            params.append('dict_id', this.selectedDict);
-                        }
 
                         const response = await this.fetchWithAuth(`/api/v1/search/fuzzy?${params}`);
 
@@ -326,6 +353,27 @@
                     this.searchWord = word;
                     this.suggestions = [];
                     this.search();
+                },
+
+                addToHistory(word) {
+                    word = word.trim();
+                    if (!word) return;
+                    this.searchHistory = this.searchHistory.filter(w => w.toLowerCase() !== word.toLowerCase());
+                    this.searchHistory.unshift(word);
+                    if (this.searchHistory.length > this.maxHistorySize) {
+                        this.searchHistory = this.searchHistory.slice(0, this.maxHistorySize);
+                    }
+                    localStorage.setItem('search_history', JSON.stringify(this.searchHistory));
+                },
+
+                removeFromHistory(word) {
+                    this.searchHistory = this.searchHistory.filter(w => w !== word);
+                    localStorage.setItem('search_history', JSON.stringify(this.searchHistory));
+                },
+
+                clearHistory() {
+                    this.searchHistory = [];
+                    localStorage.removeItem('search_history');
                 },
 
                 sanitizeHtml(html) {

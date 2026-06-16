@@ -106,7 +106,5 @@ type FuzzySearchResult struct {
 
 // FuzzyItem represents a single fuzzy search result
 type FuzzyItem struct {
-	Word     string `json:"word"`
-	DictID   string `json:"dict_id"`
-	DictName string `json:"dict_name"`
+	Word string `json:"word"`
 }
