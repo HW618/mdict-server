@@ -86,6 +86,17 @@ type UserUpdatePermissionsRequest struct {
 	IsUserAdmin bool `json:"is_user_admin"`
 }
 
+// ChangePasswordRequest represents the request for a user to change their own password
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// AdminResetPasswordRequest represents the request for an admin to reset a user's password
+type AdminResetPasswordRequest struct {
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
 // UserResponse represents the user data in API responses
 type UserResponse struct {
 	ID          string          `json:"id"`

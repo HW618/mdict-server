@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"io"
 	"fmt"
 	"net/http"
 	"os"
@@ -121,7 +122,17 @@ func (h *DictHandler) UpdateStatus(c *gin.Context) {
 
 // Upload handles dictionary file upload
 func (h *DictHandler) Upload(c *gin.Context) {
-	file, err := c.FormFile("file")
+	// Parse multipart form with memory buffer limit
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Failed to parse upload: " + err.Error(),
+			"data":    nil,
+		})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
@@ -130,23 +141,14 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		})
 		return
 	}
+	defer file.Close()
 
 	// Sanitize filename to prevent path traversal
-	safeFilename := filepath.Base(file.Filename)
+	safeFilename := filepath.Base(header.Filename)
 	if safeFilename == "." || safeFilename == "/" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
 			"message": "Invalid filename",
-			"data":    nil,
-		})
-		return
-	}
-
-	// Check file size limit
-	if h.maxUploadBytes > 0 && file.Size > h.maxUploadBytes {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-			"code":    41301,
-			"message": fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024)),
 			"data":    nil,
 		})
 		return
@@ -185,10 +187,47 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		}
 	}
 
-	// Save file
+	// Stream file to disk via temp file, then rename atomically
 	dst := filepath.Join(h.dictDir, safeFilename)
-	if err := c.SaveUploadedFile(file, dst); err != nil {
-		log.Error().Err(err).Msg("Failed to save uploaded file")
+	tmpDst := dst + ".tmp"
+
+	tmpFile, err := os.Create(tmpDst)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create temp file")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to save file",
+			"data":    nil,
+		})
+		return
+	}
+	defer os.Remove(tmpDst)
+
+	written, err := io.Copy(tmpFile, file)
+	tmpFile.Close()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to write uploaded file")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50001,
+			"message": "Failed to save file",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Check file size limit after streaming
+	if h.maxUploadBytes > 0 && written > h.maxUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"code":    41301,
+			"message": fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024)),
+			"data":    nil,
+		})
+		return
+	}
+
+	// Atomically move temp file to final destination
+	if err := os.Rename(tmpDst, dst); err != nil {
+		log.Error().Err(err).Msg("Failed to rename temp file")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50001,
 			"message": "Failed to save file",
@@ -208,29 +247,73 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		Str("audit", "true").
 		Str("action", "dict_uploaded").
 		Str("filename", safeFilename).
-		Int64("file_size", file.Size).
+		Int64("file_size", written).
 		Str("operator_id", c.GetString("userID")).
 		Msg("Dictionary file uploaded")
-
-	// Get file info
-	fileInfo, err := os.Stat(dst)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to stat uploaded file")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    50001,
-			"message": "Failed to read file info",
-			"data":    nil,
-		})
-		return
-	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "File uploaded successfully",
 		"data": gin.H{
 			"filename":  safeFilename,
-			"file_size": fileInfo.Size(),
+			"file_size": written,
 		},
+	})
+}
+
+// UpdateTitle updates dictionary title
+func (h *DictHandler) UpdateTitle(c *gin.Context) {
+	dictID := c.Param("id")
+
+	var req models.DictTitleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    40001,
+			"message": "Invalid request body",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Check if dictionary exists
+	dictInfo, err := h.dictStore.GetByID(dictID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    40401,
+			"message": "Dictionary not found",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Update title in database
+	if err := h.dictStore.UpdateTitle(dictID, req.Title); err != nil {
+		log.Error().Err(err).Msg("Failed to update dictionary title")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "Failed to update dictionary title",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Update in-memory loaded dict title
+	if loaded, ok := h.engine.GetDict(dictID); ok {
+		loaded.Info.Title = req.Title
+	}
+
+	log.Info().
+		Str("audit", "true").
+		Str("action", "dict_title_updated").
+		Str("dict_id", dictID).
+		Str("filename", dictInfo.Filename).
+		Str("new_title", req.Title).
+		Str("operator_id", c.GetString("userID")).
+		Msg("Dictionary title updated")
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Dictionary title updated",
 	})
 }
 

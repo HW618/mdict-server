@@ -107,7 +107,8 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware.RequireAuth())
 		{
-			auth.POST("/auth/logout", authHandler.Logout)
+		auth.POST("/auth/logout", authHandler.Logout)
+		auth.PUT("/users/me/password", userHandler.ChangePassword)
 		}
 
 		// API access routes (JWT or API token)
@@ -124,6 +125,7 @@ func main() {
 		dictAdmin.Use(authMiddleware.RequireDictAdmin())
 		{
 			dictAdmin.PATCH("/dicts/:id/status", dictHandler.UpdateStatus)
+			dictAdmin.PUT("/dicts/:id/title", dictHandler.UpdateTitle)
 			dictAdmin.POST("/dicts/upload", dictHandler.Upload)
 			dictAdmin.GET("/dicts/:id/download", dictHandler.Download)
 			dictAdmin.DELETE("/dicts/:id", dictHandler.Delete)
@@ -139,6 +141,7 @@ func main() {
 			userAdmin.DELETE("/users/:id", userHandler.Delete)
 			userAdmin.PUT("/users/:id/permissions", userHandler.UpdatePermissions)
 			userAdmin.POST("/users/:id/reset-token", userHandler.ResetToken)
+			userAdmin.PUT("/users/:id/password", userHandler.AdminResetPassword)
 			userAdmin.GET("/stats", healthHandler.Stats)
 		}
 	}
@@ -147,8 +150,8 @@ func main() {
 	srv := &http.Server{
 		Addr:         cfg.GetServerAddress(),
 		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  300 * time.Second,
+		WriteTimeout: 300 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
