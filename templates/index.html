@@ -3,496 +3,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mdict Server - 词典查询</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
-    <style>
-        [x-cloak] { display: none !important; }
-        /* Dictionary content rendering — no Tailwind prose interference */
-        .dict-content { font-size: 16px; line-height: 1.6; word-wrap: break-word; overflow-wrap: break-word; }
-        .dict-content img { max-width: 100%; height: auto; }
-        .dict-content a { color: #2563eb; text-decoration: underline; }
-        .dict-content table { border-collapse: collapse; }
-        .dict-content td, .dict-content th { padding: 4px 8px; border: 1px solid #d1d5db; }
-    </style>
+    <meta name="theme-color" content="#173f39">
+    <title>Mdict · 你的私人词典</title>
+    <link rel="stylesheet" href="/static/ui.css">
+    <script defer src="/static/purify.min.js"></script>
+    <script defer src="/static/app.js"></script>
+    <script defer src="/static/alpine.min.js"></script>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="app()" x-init="init()">
-    <!-- Header -->
-    <header class="bg-white shadow-sm border-b">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div class="flex items-center space-x-4">
-                <h1 class="text-2xl font-bold text-gray-900">📚 Mdict Server</h1>
-                <span class="text-sm text-gray-500">词典查询</span>
-            </div>
-            <div class="flex items-center space-x-4">
-                <template x-if="user">
-                    <div class="flex items-center space-x-4">
-                        <span class="text-sm text-gray-600" x-text="user.username"></span>
-                        <a href="/admin" class="text-sm text-blue-600 hover:text-blue-800">管理后台</a>
-                        <button @click="logout()" class="text-sm text-gray-600 hover:text-gray-800">登出</button>
-                    </div>
-                </template>
-                <template x-if="!user">
-                    <button @click="showLogin = true" class="text-sm text-blue-600 hover:text-blue-800">登录</button>
-                </template>
+<body class="dictionary-app" x-data="app()" @keydown.window="handleShortcut($event)">
+    <a class="skip-link" href="#search-input">跳到查询</a>
+    <header class="site-header">
+        <div class="header-inner">
+            <a href="/" class="brand" aria-label="Mdict 首页">
+                <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 6.5C9 4.5 5 4.5 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-2-.5-6-.5-9 1.5Z"/><path d="M12 6.5V20"/></svg></span>
+                <span>Mdict<span class="brand-subtitle">私人词典</span></span>
+            </a>
+            <nav class="header-nav" aria-label="主导航">
+                <a href="/" class="nav-current" aria-current="page">词典查询</a>
+                <a href="/admin" x-show="user?.permissions?.is_dict_admin || user?.permissions?.is_user_admin" x-cloak>管理后台</a>
+            </nav>
+            <div class="account-area">
+                <template x-if="user"><div class="account-area"><a class="mobile-admin" href="/admin" x-show="user.permissions?.is_dict_admin || user.permissions?.is_user_admin">管理</a><span class="account-name" x-text="user.username"></span><button class="text-button" @click="logout()">退出</button></div></template>
+                <button x-show="!user" class="button button-small" @click="openLogin()">登录账户 <span aria-hidden="true">↗</span></button>
             </div>
         </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="max-w-4xl mx-auto px-4 py-8">
-        <!-- Search Section -->
-        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div class="flex flex-col sm:flex-row gap-4">
-                <!-- Dictionary Selector -->
-                <div class="relative flex-shrink-0 w-48" @click.away="dropdownOpen = false" @keydown.escape="dropdownOpen = false">
-                    <button
-                        type="button"
-                        @click="dropdownOpen = !dropdownOpen"
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-left flex items-center justify-between focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                        <span class="truncate" x-text="selectedDict ? (dicts.find(d => d.id === selectedDict)?.title || dicts.find(d => d.id === selectedDict)?.filename || '所有词典') : '所有词典'"></span>
-                        <svg class="w-4 h-4 text-gray-400 flex-shrink-0 ml-2" :class="{ 'rotate-180': dropdownOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    <main class="workspace">
+        <aside class="library-sidebar" aria-label="词典与历史记录">
+            <div class="sidebar-label">我的书架 <span x-text="dicts.length.toString().padStart(2, '0')">00</span></div>
+            <button class="library-item" :class="!selectedDict && 'is-active'" @click="chooseDict('')" :aria-pressed="!selectedDict">
+                <span class="library-symbol" aria-hidden="true">▤</span><span>全部词典<small>在所有已启用词典中查询</small></span><span class="item-arrow" aria-hidden="true">↗</span>
+            </button>
+            <div class="dictionary-list">
+                <template x-for="dict in dicts" :key="dict.id">
+                    <button class="library-item" :class="selectedDict === dict.id && 'is-active'" @click="chooseDict(dict.id)" :aria-pressed="selectedDict === dict.id">
+                        <span class="library-symbol" aria-hidden="true">▥</span><span class="library-title" x-text="dict.title || dict.filename"></span>
                     </button>
-                    <div
-                        x-show="dropdownOpen"
-                        x-cloak
-                        x-transition:enter="transition ease-out duration-100"
-                        x-transition:enter-start="opacity-0 -translate-y-1"
-                        x-transition:enter-end="opacity-100 translate-y-0"
-                        x-transition:leave="transition ease-in duration-75"
-                        x-transition:leave-start="opacity-100 translate-y-0"
-                        x-transition:leave-end="opacity-0 -translate-y-1"
-                        class="absolute z-20 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto min-w-48"
-                        style="width: max-content; max-width: 24rem;"
-                    >
-                        <button
-                            @click="selectedDict = ''; dropdownOpen = false"
-                            class="w-full px-4 py-2 text-left hover:bg-blue-50 whitespace-nowrap"
-                            :class="selectedDict === '' ? 'text-blue-600 font-medium' : 'text-gray-700'"
-                        >所有词典</button>
-                        <template x-for="dict in dicts" :key="dict.id">
-                            <button
-                                @click="selectedDict = dict.id; dropdownOpen = false"
-                                class="w-full px-4 py-2 text-left hover:bg-blue-50 whitespace-nowrap"
-                                :class="selectedDict === dict.id ? 'text-blue-600 font-medium' : 'text-gray-700'"
-                                x-text="dict.title || dict.filename"
-                            ></button>
-                        </template>
-                    </div>
-                </div>
-
-                <!-- Search Input -->
-                <div class="flex-1 relative">
-                    <input
-                        type="text"
-                        x-model="searchWord"
-                        @keyup.enter="search()"
-                        @input="debouncedFuzzySearch()"
-                        placeholder="输入要查询的单词..."
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
-                    >
-                    <!-- Fuzzy suggestions -->
-                    <div
-                        x-show="suggestions.length > 0 && searchWord.length >= 2"
-                        x-cloak
-                        class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto"
-                    >
-                        <template x-for="item in suggestions" :key="item.word">
-                            <button
-                                @click="selectSuggestion(item.word)"
-                                class="w-full px-4 py-2 text-left hover:bg-gray-100"
-                            >
-                                <span x-text="item.word"></span>
-                            </button>
-                        </template>
-                    </div>
-                </div>
-
-                <!-- Search Button -->
-                <button
-                    @click="search()"
-                    class="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
-                >
-                    查询
-                </button>
-            </div>
-        </div>
-
-        <!-- Search History -->
-        <div x-show="searchHistory.length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-medium text-gray-500">搜索历史</h3>
-                <button @click="clearHistory()" class="text-xs text-gray-400 hover:text-red-500 transition-colors">清除全部</button>
-            </div>
-            <div class="flex flex-wrap gap-2">
-                <template x-for="word in searchHistory" :key="word">
-                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-700 hover:bg-blue-100 hover:text-blue-700 cursor-pointer transition-colors group">
-                        <span @click="selectSuggestion(word)" x-text="word" class="cursor-pointer"></span>
-                        <button @click.stop="removeFromHistory(word)" class="ml-1.5 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
-                    </span>
                 </template>
             </div>
-        </div>
+            <p x-show="!dicts.length" class="sidebar-note" x-text="!user ? '登录后，在这里查看你的词典收藏。' : (dictsError || '书架还是空的，前往管理后台添加词典。')"></p>
+            <section class="history-section" x-show="searchHistory.length" x-cloak aria-label="最近查询">
+                <div class="sidebar-label">最近查询 <button class="text-button" @click="clearHistory()">清空</button></div>
+                <template x-for="word in searchHistory.slice(0, 10)" :key="word">
+                    <div class="history-row"><button @click="selectSuggestion(word)" x-text="word"></button><button class="history-remove" @click="removeFromHistory(word)" :aria-label="'移除历史记录 ' + word">×</button></div>
+                </template>
+            </section>
+            <div class="sidebar-footer"><span class="status-dot"></span>你的词典，你的知识空间<p>支持 MDX / MDD 词典</p></div>
+        </aside>
 
-        <!-- Loading Indicator -->
-        <div x-show="loading" x-cloak class="text-center py-8">
-            <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
-            <p class="mt-2 text-gray-600">查询中...</p>
-        </div>
-
-        <!-- Error Message -->
-        <div x-show="error" x-cloak class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-            <p class="text-red-600" x-text="error"></p>
-        </div>
-
-        <!-- Search Results -->
-        <div x-show="results.length > 0" x-cloak>
-            <template x-for="(result, index) in results" :key="index">
-                <div class="bg-white rounded-lg shadow-sm p-6 mb-4">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg font-semibold text-gray-900" x-text="result.dict_name"></h3>
-                        <span class="text-sm text-gray-500" x-text="result.dict_id"></span>
-                    </div>
-                    <div class="dict-content max-w-none" x-html="sanitizeHtml(result.html)"></div>
-                    <div x-show="result.has_audio" class="mt-4">
-                        <button
-                            @click="playAudio(result.audio_url)"
-                            class="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                        >
-                            🔊 播放发音
-                        </button>
-                    </div>
+        <div class="reading-area">
+            <section class="search-section" aria-labelledby="page-title">
+                <div class="eyebrow"><span></span> A SPACE FOR WORDS</div>
+                <h1 id="page-title">每一个词，<br>都值得<span>读懂。</span></h1>
+                <p class="hero-description">从一个单词开始，发现更丰富的表达。</p>
+                <div class="search-tools">
+                    <label for="dictionary-select">查询范围</label>
+                    <select id="dictionary-select" :value="selectedDict" @change="chooseDict($event.target.value)">
+                        <option value="">全部词典</option>
+                        <template x-for="dict in dicts" :key="dict.id"><option :value="dict.id" x-text="dict.title || dict.filename"></option></template>
+                    </select>
+                    <span class="prefix-hint">输入 2 个字符，自动联想</span>
                 </div>
-            </template>
-        </div>
+                <form class="search-box" @submit.prevent="submitSearch()" @click.outside="cancelSuggestions()" @keydown.escape.stop="cancelSuggestions()" role="search">
+                    <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+                    <label class="sr-only" for="search-input">输入要查询的单词</label>
+                    <input id="search-input" x-ref="searchInput" type="search" x-model="searchWord" @input="onSearchInput($event)" @compositionstart="composing = true; cancelSuggestions()" @compositionend="composing = false; debouncedFuzzySearch()" @keydown.arrow-down.prevent="moveSuggestion(1)" @keydown.arrow-up.prevent="moveSuggestion(-1)" @keydown.enter="if ($event.isComposing || composing) $event.preventDefault()" placeholder="输入单词，开启探索…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="suggestion-list" :aria-expanded="suggestionsOpen" :aria-activedescendant="activeSuggestion >= 0 ? 'suggestion-' + activeSuggestion : null">
+                    <kbd class="search-shortcut" x-show="!searchWord">/</kbd>
+                    <button type="submit" class="button search-submit" :disabled="loading || !searchWord.trim()"><span x-text="loading ? '查询中' : '查询'">查询</span><span aria-hidden="true">↗</span></button>
+                    <div class="suggestion-panel" x-show="suggestionsOpen" x-cloak>
+                        <div class="suggestion-caption"><span>词条联想</span><span>↑ ↓ 选择 · Enter 查询</span></div>
+                        <div id="suggestion-list" role="listbox" aria-label="联想词条">
+                            <template x-for="(item, index) in suggestions" :key="item.word">
+                                <button type="button" role="option" :id="'suggestion-' + index" :aria-selected="activeSuggestion === index" :class="activeSuggestion === index && 'is-selected'" @mousedown.prevent @click="selectSuggestion(item.word)" @mouseenter="activeSuggestion = index"><span x-text="item.word"></span><span aria-hidden="true">↗</span></button>
+                            </template>
+                        </div>
+                        <p x-show="suggestionsLoading" class="suggestion-message" role="status">正在查找词条…</p>
+                        <p x-show="suggestionsError" class="suggestion-message" role="status" x-text="suggestionsError"></p>
+                        <p x-show="!suggestionsLoading && !suggestionsError && !suggestions.length" class="suggestion-message">没有找到此前缀的词条，试试其他拼写。</p>
+                    </div>
+                </form>
+                <div class="search-footnote"><span x-text="user ? '在你的词典收藏中，寻找准确的解释。' : '登录后即可查询你的词典收藏。'"></span><span class="keyboard-hint">按 <kbd>/</kbd> 开始查询</span></div>
+            </section>
 
-        <!-- No Results -->
-        <div x-show="searched && results.length === 0 && !loading && !error" x-cloak class="text-center py-12">
-            <p class="text-gray-500 text-lg">未找到匹配的结果</p>
+            <section class="mobile-history" x-show="searchHistory.length" x-cloak aria-label="最近查询">
+                <div class="sidebar-label">最近查询<button class="text-button" @click="clearHistory()">清空</button></div>
+                <div><template x-for="word in searchHistory.slice(0, 6)" :key="word"><button @click="selectSuggestion(word)" x-text="word"></button></template></div>
+            </section>
+            <div class="notice notice-error" x-show="error" x-cloak role="alert" x-text="error"></div>
+            <div class="loading-card" x-show="loading" x-cloak role="status"><span class="spinner"></span><span>正在翻阅词典…</span></div>
+
+            <section x-show="results.length && !loading" x-cloak aria-label="查询结果" aria-live="polite">
+                <div class="results-heading"><div><span class="eyebrow">DEFINITION</span><h2 x-text="resultWord"></h2></div><span class="result-count" x-text="results.length + ' 本词典收录'"></span></div>
+                <template x-for="result in results" :key="result.dict_id">
+                    <article class="definition-card">
+                        <header><h3><span class="status-dot"></span><span x-text="result.dict_name"></span></h3><span>词典释义</span></header>
+                        <div class="dict-content" x-effect="renderDefinition($el, result.html)"></div>
+                        <button x-show="result.has_audio" class="audio-button" @click="playAudio(result.audio_url)">▷ 播放发音</button>
+                    </article>
+                </template>
+            </section>
+            <section class="empty-state" x-show="searched && !results.length && !loading && !error" x-cloak>
+                <div class="empty-icon" aria-hidden="true">Aa</div><h2>暂未找到这个词</h2><p>检查拼写，或切换到「全部词典」继续查询。</p>
+            </section>
+            <section class="welcome-card" x-show="!searched && !loading">
+                <div class="welcome-illustration" aria-hidden="true"><div class="book-spine"></div><div class="book-cover"><span>THE WORLD<br>IN WORDS</span><strong>Aa<span>字</span></strong><i>YOUR PERSONAL LIBRARY</i></div></div>
+                <div class="welcome-copy"><div class="eyebrow">查词，也是一种发现</div><h2>把好奇心，留给下一个词。</h2><p>聚合多本词典的释义，让每一次查询<br class="desktop-break">都有新的收获。</p><div class="feature-tags"><span>多词典对照</span><span>前缀联想</span><span>查询历史</span></div></div>
+            </section>
+            <footer class="page-footer"><span>MDICT · PERSONAL DICTIONARY</span><span>让理解更进一步。</span></footer>
         </div>
     </main>
 
-    <!-- Login Modal -->
-    <div x-show="showLogin" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
-            <h2 class="text-2xl font-bold mb-6">登录</h2>
+    <div class="modal-backdrop" x-show="showLogin" x-cloak @click.self="closeLogin()" @keydown.escape.window="if (showLogin) closeLogin()">
+        <section class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" @keydown.tab="trapLoginFocus($event)">
+            <button class="dialog-close" @click="closeLogin()" aria-label="关闭登录">×</button>
+            <span class="eyebrow">WELCOME BACK</span><h2 id="login-title">回到你的词典空间</h2><p>登录后，继续探索词语的世界。</p>
             <form @submit.prevent="login()">
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
-                    <input
-                        type="text"
-                        x-model="loginForm.username"
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        required
-                    >
-                </div>
-                <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
-                    <input
-                        type="password"
-                        x-model="loginForm.password"
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        required
-                    >
-                </div>
-                <div x-show="loginError" class="mb-4 text-red-600 text-sm" x-text="loginError"></div>
-                <div class="flex justify-end space-x-4">
-                    <button
-                        type="button"
-                        @click="showLogin = false"
-                        class="px-4 py-2 text-gray-600 hover:text-gray-800"
-                    >
-                        取消
-                    </button>
-                    <button
-                        type="submit"
-                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                    >
-                        登录
-                    </button>
-                </div>
+                <label for="login-username">用户名</label><input id="login-username" x-ref="loginUsername" type="text" x-model="loginForm.username" autocomplete="username" required>
+                <label for="login-password">密码</label><input id="login-password" type="password" x-model="loginForm.password" autocomplete="current-password" required>
+                <p x-show="loginError" class="login-error" role="alert" x-text="loginError"></p>
+                <button type="submit" class="button" :disabled="loginLoading" x-text="loginLoading ? '正在登录…' : '登录账户 →'">登录账户 →</button>
             </form>
-        </div>
+        </section>
     </div>
-
-    <!-- Audio Player (hidden) -->
-    <audio x-ref="audioPlayer" class="hidden"></audio>
-
-    <script>
-        function app() {
-            return {
-                dicts: [],
-                selectedDict: '',
-                dropdownOpen: false,
-                searchWord: '',
-                results: [],
-                suggestions: [],
-                loading: false,
-                searched: false,
-                error: null,
-                user: null,
-                token: null,
-                showLogin: false,
-                loginForm: {
-                    username: '',
-                    password: ''
-                },
-                loginError: null,
-                fuzzySearchTimeout: null,
-                searchHistory: [],
-                maxHistorySize: 50,
-
-                async init() {
-                    // Check for saved token
-                    this.token = localStorage.getItem('token');
-                    if (this.token) {
-                        try {
-                            const userStr = localStorage.getItem('user');
-                            if (userStr) {
-                                this.user = JSON.parse(userStr);
-                            }
-                        } catch (e) {
-                            this.token = null;
-                        }
-                    }
-
-                    // Load dictionaries
-                    await this.loadDicts();
-
-                    // Load search history
-                    const saved = localStorage.getItem('search_history');
-                    if (saved) {
-                        try {
-                            this.searchHistory = JSON.parse(saved);
-                        } catch (e) {
-                            this.searchHistory = [];
-                        }
-                    }
-                },
-
-                async loadDicts() {
-                    try {
-                        const response = await this.fetchWithAuth('/api/v1/dicts');
-                        if (response.code === 0) {
-                            this.dicts = response.data.filter(d => d.is_enabled);
-                        }
-                    } catch (e) {
-                        console.error('Failed to load dictionaries:', e);
-                    }
-                },
-
-                async search() {
-                    if (!this.searchWord.trim()) return;
-
-                    this.loading = true;
-                    this.error = null;
-                    this.results = [];
-                    this.suggestions = [];
-                    this.searched = true;
-
-                    try {
-                        const params = new URLSearchParams({ word: this.searchWord.trim() });
-                        if (this.selectedDict) {
-                            params.append('dict_id', this.selectedDict);
-                        }
-
-                        const response = await this.fetchWithAuth(`/api/v1/search?${params}`);
-
-                        if (response.code === 0) {
-                            this.results = response.data.results || [];
-                            if (this.results.length > 0) {
-                                this.addToHistory(this.searchWord.trim());
-                            }
-                        } else if (response.code === 40401) {
-                            this.results = [];
-                        } else {
-                            this.error = response.message || '查询失败';
-                        }
-                    } catch (e) {
-                        this.error = '网络错误，请重试';
-                    } finally {
-                        this.loading = false;
-                    }
-                },
-
-                debouncedFuzzySearch() {
-                    if (this.fuzzySearchTimeout) {
-                        clearTimeout(this.fuzzySearchTimeout);
-                    }
-
-                    if (this.searchWord.length < 2) {
-                        this.suggestions = [];
-                        return;
-                    }
-
-                    this.fuzzySearchTimeout = setTimeout(() => {
-                        this.fuzzySearch();
-                    }, 300);
-                },
-
-                async fuzzySearch() {
-                    try {
-                        const params = new URLSearchParams({
-                            keyword: this.searchWord,
-                            page_size: '10'
-                        });
-                        if (this.selectedDict) {
-                            params.append('dict_id', this.selectedDict);
-                        }
-
-                        const response = await this.fetchWithAuth(`/api/v1/search/fuzzy?${params}`);
-
-                        if (response.code === 0) {
-                            this.suggestions = response.data.items || [];
-                        }
-                    } catch (e) {
-                        console.error('Fuzzy search failed:', e);
-                    }
-                },
-
-                selectSuggestion(word) {
-                    this.searchWord = word;
-                    this.suggestions = [];
-                    this.search();
-                },
-
-                addToHistory(word) {
-                    word = word.trim();
-                    if (!word) return;
-                    this.searchHistory = this.searchHistory.filter(w => w.toLowerCase() !== word.toLowerCase());
-                    this.searchHistory.unshift(word);
-                    if (this.searchHistory.length > this.maxHistorySize) {
-                        this.searchHistory = this.searchHistory.slice(0, this.maxHistorySize);
-                    }
-                    localStorage.setItem('search_history', JSON.stringify(this.searchHistory));
-                },
-
-                removeFromHistory(word) {
-                    const lower = word.toLowerCase();
-                    this.searchHistory = this.searchHistory.filter(w => w.toLowerCase() !== lower);
-                    localStorage.setItem('search_history', JSON.stringify(this.searchHistory));
-                },
-
-                clearHistory() {
-                    this.searchHistory = [];
-                    localStorage.removeItem('search_history');
-                },
-
-                sanitizeHtml(html) {
-                    if (!html) return '';
-                    return DOMPurify.sanitize(html, {
-                        ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote', 'style', 'dl', 'dt', 'dd', 'pre', 'code', 'em', 'strong', 'small', 'mark', 'abbr', 'ruby', 'rt', 'rp', 'bdo'],
-                        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'style', 'width', 'height', 'controls', 'autoplay', 'loop', 'type', 'color', 'size', 'face', 'cellpadding', 'cellspacing', 'border', 'align', 'valign', 'bgcolor', 'nowrap', 'colspan', 'rowspan', 'scope', 'id', 'name'],
-                        ADD_ATTR: ['target'],
-                        FORCE_BODY: true,
-                        ALLOW_DATA_ATTR: true
-                    });
-                },
-
-                playAudio(url) {
-                    if (url && this.$refs.audioPlayer) {
-                        this.$refs.audioPlayer.src = url;
-                        this.$refs.audioPlayer.play();
-                    }
-                },
-
-                async login() {
-                    this.loginError = null;
-
-                    try {
-                        const response = await fetch('/api/v1/auth/login', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.loginForm)
-                        });
-
-                        const data = await response.json();
-
-                        if (data.code === 0) {
-                            this.token = data.data.access_token;
-                            this.user = data.data.user;
-
-                            localStorage.setItem('token', this.token);
-                            localStorage.setItem('refresh_token', data.data.refresh_token);
-                            localStorage.setItem('user', JSON.stringify(this.user));
-
-                            this.showLogin = false;
-                            this.loginForm = { username: '', password: '' };
-
-                            // Reload dictionaries
-                            await this.loadDicts();
-                        } else {
-                            this.loginError = data.message || '登录失败';
-                        }
-                    } catch (e) {
-                        this.loginError = '网络错误，请重试';
-                    }
-                },
-
-                logout() {
-                    this.token = null;
-                    this.user = null;
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('refresh_token');
-                    localStorage.removeItem('user');
-                },
-
-                async fetchWithAuth(url, options = {}) {
-                    const headers = {
-                        'Content-Type': 'application/json',
-                        ...options.headers
-                    };
-
-                    if (this.token) {
-                        headers['Authorization'] = `Bearer ${this.token}`;
-                    }
-
-                    const response = await fetch(url, {
-                        ...options,
-                        headers
-                    });
-
-                    // Handle token expiration
-                    if (response.status === 401 && this.token) {
-                        // Try to refresh token
-                        const refreshed = await this.refreshToken();
-                        if (refreshed) {
-                            headers['Authorization'] = `Bearer ${this.token}`;
-                            return fetch(url, { ...options, headers }).then(r => r.json());
-                        } else {
-                            this.logout();
-                        }
-                    }
-
-                    return response.json();
-                },
-
-                async refreshToken() {
-                    try {
-                        const refreshToken = localStorage.getItem('refresh_token');
-                        if (!refreshToken) return false;
-
-                        const response = await fetch('/api/v1/auth/refresh', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ refresh_token: refreshToken })
-                        });
-
-                        const data = await response.json();
-                        if (data.code === 0) {
-                            this.token = data.data.access_token;
-                            localStorage.setItem('token', this.token);
-                            return true;
-                        }
-                    } catch (e) {
-                        console.error('Token refresh failed:', e);
-                    }
-                    return false;
-                }
-            }
-        }
-    </script>
+    <audio x-ref="audioPlayer" hidden></audio>
 </body>
 </html>

@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	mdx "github.com/lib-x/mdx"
 	"github.com/microcosm-cc/bluemonday"
@@ -27,22 +27,21 @@ func isPathSafe(baseDir, resolvedPath string) bool {
 
 // Engine manages dictionary loading and querying
 type Engine struct {
-	mu         sync.RWMutex
-	dicts      map[string]*LoadedDict
-	dictDir    string
-	dictStore  *store.DictStore
-	sanitizer  *bluemonday.Policy
-	wordIndex  []string // global sorted deduplicated word list for fast prefix search
+	mu        sync.RWMutex
+	dicts     map[string]*LoadedDict
+	dictDir   string
+	dictStore *store.DictStore
+	sanitizer *bluemonday.Policy
+	wordIndex []indexedWord // sorted by the same normalized key used for prefix search
 }
 
 // LoadedDict represents a loaded dictionary with its parsed data
 type LoadedDict struct {
-	Info       *models.Dictionary
-	mdxDict    *mdx.Mdict                 // MDX dictionary for word lookup
-	mddDict    *mdx.Mdict                 // MDD resource file (nil if no .mdd)
-	fuzzyStore *mdx.MemoryFuzzyIndexStore // fuzzy search index
-	dictName   string                     // dictionary name used in fuzzy store (DictionaryInfo.Name)
-	resDir     string                     // directory for standalone resource files (same as .mdx filename without ext)
+	Info      *models.Dictionary
+	mdxDict   *mdx.Mdict    // MDX dictionary for word lookup
+	mddDict   *mdx.Mdict    // MDD resource file (nil if no .mdd)
+	wordIndex []indexedWord // built once when loading the MDX
+	resDir    string        // directory for standalone resource files (same as .mdx filename without ext)
 }
 
 // NewEngine creates a new dictionary engine
@@ -151,28 +150,21 @@ func (e *Engine) disableOrphans() error {
 // rebuildWordIndex rebuilds the global sorted deduplicated word list from all loaded dictionaries.
 // Must be called with e.mu held.
 func (e *Engine) rebuildWordIndex() {
-	wordSet := make(map[string]struct{})
+	wordSet := make(map[string]indexedWord)
 	for _, dict := range e.dicts {
 		if !dict.Info.IsEnabled {
 			continue
 		}
-		entries, err := dict.mdxDict.ExportEntries()
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			w := strings.TrimSpace(entry.Keyword)
-			if w != "" {
-				wordSet[w] = struct{}{}
-			}
+		for _, entry := range dict.wordIndex {
+			wordSet[entry.word] = entry
 		}
 	}
 
-	words := make([]string, 0, len(wordSet))
-	for w := range wordSet {
-		words = append(words, w)
+	words := make([]indexedWord, 0, len(wordSet))
+	for _, entry := range wordSet {
+		words = append(words, entry)
 	}
-	sort.Strings(words)
+	sortWordIndex(words)
 	e.wordIndex = words
 
 	log.Info().Int("unique_words", len(words)).Msg("Global word index rebuilt")
@@ -226,21 +218,16 @@ func (e *Engine) loadDict(filename string) error {
 		log.Info().Str("resDir", resDirPath).Msg("Found resource directory for dictionary")
 	}
 
-	// Build fuzzy search index
-	fuzzyStore := mdx.NewMemoryFuzzyIndexStore()
+	// Export only once. Prefix search does not need the library's fuzzy index.
 	exportedEntries, err := mdxDict.ExportEntries()
 	if err != nil {
-		log.Warn().Err(err).Str("filename", filename).Msg("Failed to export entries for fuzzy index")
-	} else {
-		if err := fuzzyStore.Put(info, exportedEntries); err != nil {
-			log.Warn().Err(err).Str("filename", filename).Msg("Failed to build fuzzy index")
-		} else {
-			log.Info().
-				Str("filename", filename).
-				Int("fuzzyEntries", len(exportedEntries)).
-				Msg("Fuzzy index built")
-		}
+		return fmt.Errorf("failed to export dictionary entries: %w", err)
 	}
+	words := make([]string, 0, len(exportedEntries))
+	for _, entry := range exportedEntries {
+		words = append(words, entry.Keyword)
+	}
+	wordIndex := newWordIndex(words)
 
 	// Store in database
 	exists, err := e.dictStore.ExistsByFilename(filename)
@@ -256,6 +243,7 @@ func (e *Engine) loadDict(filename string) error {
 		}
 		dictInfo.ID = existing.ID
 		dictInfo.IsEnabled = existing.IsEnabled
+		dictInfo.Title = existing.Title
 		if err := e.dictStore.Update(dictInfo); err != nil {
 			return fmt.Errorf("failed to update dictionary: %w", err)
 		}
@@ -268,12 +256,11 @@ func (e *Engine) loadDict(filename string) error {
 
 	// Store in memory
 	e.dicts[dictInfo.ID] = &LoadedDict{
-		Info:       dictInfo,
-		mdxDict:    mdxDict,
-		mddDict:    mddDict,
-		fuzzyStore: fuzzyStore,
-		dictName:   info.Name,
-		resDir:     resDir,
+		Info:      dictInfo,
+		mdxDict:   mdxDict,
+		mddDict:   mddDict,
+		wordIndex: wordIndex,
+		resDir:    resDir,
 	}
 
 	log.Info().
@@ -291,16 +278,13 @@ func (e *Engine) Reload(dictID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	loaded, exists := e.dicts[dictID]
-	if !exists {
-		return fmt.Errorf("dictionary not loaded: %s", dictID)
+	info, err := e.dictStore.GetByID(dictID)
+	if err != nil {
+		return fmt.Errorf("dictionary not found: %w", err)
 	}
 
-	// Remove from memory
-	delete(e.dicts, dictID)
-
-	// Reload
-	if err := e.loadDict(loaded.Info.Filename); err != nil {
+	// Keep the old dictionary available if loading the replacement fails.
+	if err := e.loadDict(info.Filename); err != nil {
 		return err
 	}
 
@@ -315,6 +299,7 @@ func (e *Engine) Unload(dictID string) {
 	defer e.mu.Unlock()
 
 	delete(e.dicts, dictID)
+	e.rebuildWordIndex()
 }
 
 // Search performs an exact search across all enabled dictionaries
@@ -495,34 +480,44 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 	defer e.mu.RUnlock()
 
 	keyword = strings.TrimSpace(strings.ToLower(keyword))
-	if len(keyword) < 2 {
+	if utf8.RuneCountInString(keyword) < 2 {
 		return nil, fmt.Errorf("keyword must be at least 2 characters")
 	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
 
-	// Binary search on the global sorted word index for prefix matches
-	// Find the first word that starts with the keyword (case-insensitive)
-	matches := e.prefixSearch(keyword)
-
-	// Calculate pagination
+	index := e.wordIndex
+	if dictID != "" {
+		index = nil
+		if dict, ok := e.dicts[dictID]; ok && dict.Info.IsEnabled {
+			index = dict.wordIndex
+		}
+	}
+	matches := prefixMatches(index, keyword)
 	total := len(matches)
-	totalPages := (total + pageSize - 1) / pageSize
+	totalPages := total / pageSize
+	if total%pageSize != 0 {
+		totalPages++
+	}
 	if totalPages == 0 {
 		totalPages = 1
 	}
 
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start > total {
-		start = total
+	// Check the page before multiplying to avoid overflow from client input.
+	start := total
+	if page <= totalPages {
+		start = (page - 1) * pageSize
 	}
-	if end > total {
-		end = total
-	}
+	end := start + min(pageSize, total-start)
 
 	// Build result — just words, no per-dictionary info
 	items := make([]models.FuzzyItem, 0, end-start)
 	for _, word := range matches[start:end] {
-		items = append(items, models.FuzzyItem{Word: word})
+		items = append(items, models.FuzzyItem{Word: word.word})
 	}
 
 	return &models.FuzzySearchResult{
@@ -534,30 +529,39 @@ func (e *Engine) FuzzySearch(keyword string, dictID string, page, pageSize int) 
 	}, nil
 }
 
-// prefixSearch uses binary search on the global word index to find all words
-// whose lowercase form starts with the given keyword prefix.
-// Returns words in sorted order. O(log n + k) where k = number of matches.
-func (e *Engine) prefixSearch(keyword string) []string {
-	idx := e.wordIndex
-	if len(idx) == 0 {
-		return nil
-	}
+// SetEnabled keeps the persisted state and search indexes in sync.
+func (e *Engine) SetEnabled(dictID string, enabled bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	// Find the leftmost position where keyword could be a prefix
-	lo := sort.Search(len(idx), func(i int) bool {
-		return strings.ToLower(idx[i]) >= keyword
-	})
-
-	// Collect all words starting with keyword
-	var matches []string
-	for i := lo; i < len(idx); i++ {
-		if !strings.HasPrefix(strings.ToLower(idx[i]), keyword) {
-			break
+	loaded, exists := e.dicts[dictID]
+	if !exists && enabled {
+		info, err := e.dictStore.GetByID(dictID)
+		if err != nil {
+			return err
 		}
-		matches = append(matches, idx[i])
+		if err := e.loadDict(info.Filename); err != nil {
+			return err
+		}
+		loaded = e.dicts[dictID]
 	}
+	if err := e.dictStore.UpdateStatus(dictID, enabled); err != nil {
+		return err
+	}
+	if loaded != nil {
+		loaded.Info.IsEnabled = enabled
+	}
+	e.rebuildWordIndex()
+	return nil
+}
 
-	return matches
+// SetTitle updates in-memory metadata under the same lock used by Search.
+func (e *Engine) SetTitle(dictID, title string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if loaded, ok := e.dicts[dictID]; ok {
+		loaded.Info.Title = title
+	}
 }
 
 // GetDict returns a loaded dictionary

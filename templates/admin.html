@@ -4,18 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mdict Server - 管理后台</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="/static/ui.css">
+    <script defer src="/static/alpine.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="adminApp()" x-init="init()">
+<body class="admin-app bg-gray-50 min-h-screen" x-data="adminApp()">
     <!-- Header -->
     <header class="bg-white shadow-sm border-b">
         <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex items-center space-x-4">
-                <a href="/" class="text-2xl font-bold text-gray-900">📚 Mdict Server</a>
+                <a href="/" class="text-2xl font-bold text-gray-900">Mdict · 私人词典</a>
                 <span class="text-sm text-gray-500">管理后台</span>
             </div>
             <div class="flex items-center space-x-4">
@@ -29,6 +29,7 @@
 
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto px-4 py-8">
+        <div class="admin-intro"><span class="eyebrow">YOUR DICTIONARY WORKSPACE</span><h1>管理你的词典空间</h1><p>整理词典收藏，管理访问权限，让知识井然有序。</p></div>
         <!-- Loading -->
         <div x-show="loading" x-cloak class="text-center py-12">
             <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
@@ -47,7 +48,7 @@
         <div x-show="!loading && user" x-cloak>
             <!-- Dictionary Management -->
             <section class="bg-white rounded-lg shadow-sm p-6 mb-6">
-                <h2 class="text-xl font-bold text-gray-900 mb-4">📖 词典管理</h2>
+                <h2 class="text-xl font-bold text-gray-900 mb-4">词典管理</h2>
 
                 <!-- Upload Area -->
                 <div
@@ -143,7 +144,7 @@
             <!-- User Management -->
             <section class="bg-white rounded-lg shadow-sm p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-xl font-bold text-gray-900">👥 用户管理</h2>
+                    <h2 class="text-xl font-bold text-gray-900">用户管理</h2>
                     <button
                         x-show="isAdmin"
                         @click="showCreateUser = true"
@@ -460,6 +461,7 @@
                 uploadProgress: 0,
                 dragover: false,
                 uploadFileName: '',
+                uploadStatusText: '',
                 uploadLoaded: '',
                 uploadTotal: '',
                 showChangePassword: false,

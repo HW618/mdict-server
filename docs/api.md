@@ -294,7 +294,9 @@ curl "http://localhost:8080/api/v1/search?word=hello&dict_id=oxford" \
 
 ### GET /api/v1/search/fuzzy
 
-模糊查询单词。
+按前缀匹配单词，不区分大小写。只查询已启用的词典；指定 `dict_id` 时限定该词典。
+
+关键词会去除两端空白，最少需要 2 个 Unicode 字符。结果按小写词形排序，相同词形再按原始拼写排序；相同拼写跨词典去重，并保留大小写不同的词条。超出末页返回空列表，分页总数保持不变。
 
 **认证：** 需要（`can_use_api` 权限或 Web 登录）
 
@@ -316,14 +318,10 @@ curl "http://localhost:8080/api/v1/search?word=hello&dict_id=oxford" \
   "data": {
     "items": [
       {
-        "word": "hello",
-        "dict_id": "oxford",
-        "dict_name": "Oxford Advanced Dictionary"
+        "word": "hello"
       },
       {
-        "word": "help",
-        "dict_id": "oxford",
-        "dict_name": "Oxford Advanced Dictionary"
+        "word": "help"
       }
     ],
     "total": 150,
@@ -340,8 +338,6 @@ curl "http://localhost:8080/api/v1/search?word=hello&dict_id=oxford" \
 |------|------|------|
 | `items` | array | 匹配的单词列表 |
 | `items[].word` | string | 单词 |
-| `items[].dict_id` | string | 词典 ID |
-| `items[].dict_name` | string | 词典名称 |
 | `total` | int | 总匹配数 |
 | `page` | int | 当前页码 |
 | `page_size` | int | 每页数量 |

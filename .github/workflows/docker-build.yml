@@ -21,6 +21,14 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run browser state tests
+        run: node --test test/ui/app.test.cjs
+
       - name: Run linter
         uses: golangci/golangci-lint-action@v7
         with:
