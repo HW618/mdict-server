@@ -66,6 +66,37 @@ test('dictionary changes invalidate suggestions and pass the new filter', async 
     assert.equal(new URL(requested, 'http://localhost').searchParams.get('dict_id'), 'second');
 });
 
+test('typing or composing during a lookup does not show an empty result', async () => {
+    const app = createApp(), response = deferred();
+    app.searchWord = 'apple';
+    app.fetchWithAuth = () => response.promise;
+    const pending = app.search();
+    app.searchWord = 'appl';
+    app.onSearchInput({ isComposing: true });
+    assert.equal(app.loading, false);
+    assert.equal(app.searched, false);
+    assert.equal(app.results.length, 0);
+    response.resolve({ code: 0, data: { results: [{ dict_id: 'first', html: 'apple' }] } });
+    await pending;
+    assert.equal(app.searched, false);
+    assert.equal(app.results.length, 0);
+});
+
+test('a missing word clears the previous definition', async () => {
+    const app = createApp();
+    app.searchWord = 'apple';
+    app.fetchWithAuth = async () => ({ code: 0, data: { results: [{ dict_id: 'first', html: 'apple' }] } });
+    await app.search();
+    app.searchWord = 'missing';
+    app.fetchWithAuth = async () => ({ code: 40401, message: 'No results found' });
+    await app.search();
+    assert.equal(app.searched, true);
+    assert.equal(app.loading, false);
+    assert.equal(app.error, null);
+    assert.equal(app.resultWord, 'missing');
+    assert.equal(app.results.length, 0);
+});
+
 test('late exact searches do not overwrite results or search history', async () => {
     const app = createApp(), old = deferred();
     app.searchWord = 'apple'; app.fetchWithAuth = () => old.promise;
