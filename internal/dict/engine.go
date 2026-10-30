@@ -3,6 +3,7 @@ package dict
 import (
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -363,10 +364,10 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 		hasAudio := false
 		audioURL := ""
 		if dict.mddDict != nil {
-			audioPath := fmt.Sprintf("\\%s.mp3", strings.ToLower(word))
-			if _, err := dict.mddDict.AssetResolver().Read(audioPath); err == nil {
+			fileName := strings.ToLower(word) + ".mp3"
+			if _, err := dict.mddDict.AssetResolver().Read(`\` + fileName); err == nil {
 				hasAudio = true
-				audioURL = fmt.Sprintf("/api/v1/assets/%s/%s", id, audioPath)
+				audioURL = "/api/v1/assets/" + id + "/" + url.PathEscape(fileName)
 			}
 		}
 
@@ -594,7 +595,7 @@ func (e *Engine) GetAsset(dictID, assetPath string) ([]byte, string, error) {
 	assetPath = strings.TrimPrefix(assetPath, "/")
 
 	dict, exists := e.dicts[dictID]
-	if !exists {
+	if !exists || !dict.Info.IsEnabled {
 		return nil, "", fmt.Errorf("dictionary not found: %s", dictID)
 	}
 

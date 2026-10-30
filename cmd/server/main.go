@@ -119,6 +119,7 @@ func main() {
 			apiAccess.GET("/search", searchHandler.Search)
 			apiAccess.GET("/search/fuzzy", searchHandler.FuzzySearch)
 			apiAccess.GET("/dicts", dictHandler.List)
+			apiAccess.GET("/assets/:id/*path", dictHandler.GetAsset)
 		}
 
 		// Dict admin routes

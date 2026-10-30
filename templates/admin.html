@@ -76,6 +76,7 @@
                     <p class="text-sm text-gray-500 mt-2" x-text="uploadStatusText"></p>
                 </div>
 
+                <p x-show="dictStatusError" x-cloak class="mb-4 text-sm text-red-600" role="alert" x-text="dictStatusError"></p>
                 <!-- Dictionary List -->
                 <div class="overflow-x-auto">
                     <table class="w-full">
@@ -473,6 +474,7 @@
                 adminResetError: null,
                 editingDictId: null,
                 editingTitle: '',
+                dictStatusError: '',
 
                 async init() {
                     this.token = localStorage.getItem('token');
@@ -525,6 +527,7 @@
                 },
 
                 async toggleDictStatus(dict) {
+                    this.dictStatusError = '';
                     try {
                         const response = await this.fetchWithAuth(`/api/v1/dicts/${dict.id}/status`, {
                             method: 'PATCH',
@@ -533,9 +536,11 @@
 
                         if (response.code === 0) {
                             dict.is_enabled = !dict.is_enabled;
+                        } else {
+                            this.dictStatusError = '词典状态更新失败，请稍后重试。';
                         }
                     } catch (e) {
-                        console.error('Failed to toggle dict status:', e);
+                        this.dictStatusError = '词典状态更新失败，请稍后重试。';
                     }
                 },
 

@@ -65,7 +65,7 @@
                     </select>
                     <span class="prefix-hint">输入 2 个字符，自动联想</span>
                 </div>
-                <form class="search-box" @submit.prevent="submitSearch()" @click.outside="cancelSuggestions()" @keydown.escape.stop="cancelSuggestions()" role="search">
+                <form class="search-box" @submit.prevent="submitSearch()" @click.outside="cancelSuggestions()" @keydown.escape.prevent.stop="cancelSuggestions()" role="search">
                     <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
                     <label class="sr-only" for="search-input">输入要查询的单词</label>
                     <input id="search-input" x-ref="searchInput" type="search" x-model="searchWord" @input="onSearchInput($event)" @compositionstart="composing = true; cancelSuggestions()" @compositionend="composing = false; debouncedFuzzySearch()" @keydown.arrow-down.prevent="moveSuggestion(1)" @keydown.arrow-up.prevent="moveSuggestion(-1)" @keydown.enter="if ($event.isComposing || composing) $event.preventDefault()" placeholder="输入单词，开启探索…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="suggestion-list" :aria-expanded="suggestionsOpen" :aria-activedescendant="activeSuggestion >= 0 ? 'suggestion-' + activeSuggestion : null">

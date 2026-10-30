@@ -6,29 +6,28 @@ function app() {
         loading: false, searched: false, error: null, user: null, token: null,
         showLogin: false, loginLoading: false, loginForm: { username: '', password: '' }, loginError: null,
         fuzzySearchTimeout: null, fuzzyController: null, fuzzyRequest: 0,
-        searchController: null, searchRequest: 0, refreshPromise: null,
-        searchHistory: [], maxHistorySize: 50,
+        searchController: null, searchRequest: 0, refreshPromise: null, dictRequest: 0,
+        searchHistory: [], maxHistorySize: 50, assetBlobs: new Map(),
 
         async init() {
             try {
                 this.token = localStorage.getItem('token');
                 this.user = this.token ? JSON.parse(localStorage.getItem('user') || 'null') : null;
-                const history = JSON.parse(localStorage.getItem('search_history') || '[]');
-                this.searchHistory = Array.isArray(history)
-                    ? [...new Set(history.filter(word => typeof word === 'string' && word.trim()))].slice(0, this.maxHistorySize) : [];
             } catch (_) {
                 this.token = null;
                 this.user = null;
             }
+            this.loadHistory();
             if (this.token) await this.loadDicts();
         },
 
         async loadDicts() {
             this.dictsError = '';
+            const request = ++this.dictRequest;
             const token = this.token;
             try {
                 const response = await this.fetchWithAuth('/api/v1/dicts');
-                if (!this.token || (token !== this.token && !this.user)) return;
+                if (request !== this.dictRequest || token !== this.token) return;
                 if (response.code === 0) {
                     this.dicts = (response.data || []).filter(dict => dict.is_enabled);
                     if (!this.dicts.some(dict => dict.id === this.selectedDict)) this.selectedDict = '';
@@ -162,8 +161,23 @@ function app() {
             this.$refs.searchInput.focus();
         },
 
+        historyStorageKey() {
+            return this.user?.id ? `search_history:${this.user.id}` : '';
+        },
+        loadHistory() {
+            try { localStorage.removeItem('search_history'); } catch (_) { /* Drop the old shared history key. */ }
+            const key = this.historyStorageKey();
+            if (!key) { this.searchHistory = []; return; }
+            try {
+                const history = JSON.parse(localStorage.getItem(key) || '[]');
+                this.searchHistory = Array.isArray(history)
+                    ? [...new Set(history.filter(word => typeof word === 'string' && word.trim()))].slice(0, this.maxHistorySize) : [];
+            } catch (_) { this.searchHistory = []; }
+        },
         persistHistory() {
-            try { localStorage.setItem('search_history', JSON.stringify(this.searchHistory)); } catch (_) { /* Private storage may be unavailable. */ }
+            const key = this.historyStorageKey();
+            if (!key) return;
+            try { localStorage.setItem(key, JSON.stringify(this.searchHistory)); } catch (_) { /* Private storage may be unavailable. */ }
         },
         addToHistory(word) {
             this.searchHistory = [word, ...this.searchHistory.filter(item => item.toLowerCase() !== word.toLowerCase())].slice(0, this.maxHistorySize);
@@ -182,12 +196,73 @@ function app() {
         renderDefinition(element, html) {
             // Keep dictionary CSS from changing the surrounding app or other definitions.
             const root = element.shadowRoot || element.attachShadow({ mode: 'open' });
+            const generation = (element._renderGeneration || 0) + 1;
+            element._renderGeneration = generation;
             root.innerHTML = `<style>:host{display:block;font-size:16px;line-height:1.8;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#22685a}p{margin:.6em 0}</style>${this.sanitizeHtml(html)}`;
+            this.hydrateAssets(root, generation, element);
+        },
+        normalizeAssetURL(url) {
+            if (typeof url !== 'string') return '';
+            const normalized = url.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+            return normalized.startsWith('/api/v1/assets/') ? normalized : '';
+        },
+        async authorizedBlob(url) {
+            const assetURL = this.normalizeAssetURL(url);
+            if (!assetURL) return url;
+            const cached = this.assetBlobs.get(assetURL);
+            if (cached) return cached;
+            const response = await this.fetchAsset(assetURL);
+            if (!response.ok) throw new Error('asset');
+            const blobURL = URL.createObjectURL(await response.blob());
+            this.assetBlobs.set(assetURL, blobURL);
+            return blobURL;
+        },
+        async fetchAsset(url) {
+            const headers = {};
+            if (this.token) headers.Authorization = `Bearer ${this.token}`;
+            let response = await fetch(url, { headers });
+            if (response.status === 401 && this.token) {
+                const refreshed = await this.refreshToken();
+                if (refreshed) {
+                    headers.Authorization = `Bearer ${this.token}`;
+                    response = await fetch(url, { headers });
+                }
+            }
+            return response;
+        },
+        revokeAssetBlobs() {
+            for (const blobURL of this.assetBlobs.values()) URL.revokeObjectURL(blobURL);
+            this.assetBlobs.clear();
+        },
+        async hydrateAssets(root, generation, element) {
+            const current = () => element._renderGeneration === generation;
+            const nodes = [...root.querySelectorAll('[src], [href]')];
+            await Promise.all(nodes.map(async node => {
+                for (const attr of ['src', 'href']) {
+                    const value = node.getAttribute(attr);
+                    if (!current() || !this.normalizeAssetURL(value)) continue;
+                    try {
+                        const next = await this.authorizedBlob(value);
+                        if (current() && next !== value) node.setAttribute(attr, next);
+                    } catch (_) { /* Leave the original URL when the asset cannot be loaded. */ }
+                }
+            }));
+            for (const style of root.querySelectorAll('style')) {
+                let css = style.textContent || '';
+                for (const assetURL of [...new Set(css.match(/\/api\/v1\/assets\/[^"')\s]+/g) || [])]) {
+                    if (!current()) return;
+                    try { css = css.split(assetURL).join(await this.authorizedBlob(assetURL)); }
+                    catch (_) { /* Keep the original CSS reference. */ }
+                }
+                if (current()) style.textContent = css;
+            }
         },
         async playAudio(url) {
             if (!url) return;
-            try { this.$refs.audioPlayer.src = url; await this.$refs.audioPlayer.play(); }
-            catch (_) { this.error = '发音播放失败，请稍后重试。'; }
+            try {
+                this.$refs.audioPlayer.src = this.normalizeAssetURL(url) ? await this.authorizedBlob(url) : url;
+                await this.$refs.audioPlayer.play();
+            } catch (_) { this.error = '发音播放失败，请稍后重试。'; }
         },
 
         openLogin() { this.showLogin = true; this.$nextTick(() => this.$refs.loginUsername.focus()); },
@@ -213,6 +288,7 @@ function app() {
                     localStorage.setItem('user', JSON.stringify(this.user));
                     this.closeLogin();
                     this.loginForm = { username: '', password: '' };
+                    this.loadHistory();
                     await this.loadDicts();
                     if (this.searchWord.trim()) await this.search();
                 } else this.loginError = '登录失败，请检查用户名和密码。';
@@ -222,6 +298,8 @@ function app() {
         logout() {
             this.cancelSuggestions();
             this.cancelSearch();
+            this.dictRequest++;
+            this.revokeAssetBlobs();
             this.token = null;
             this.user = null;
             this.dicts = [];
@@ -229,9 +307,11 @@ function app() {
             this.results = [];
             this.searched = false;
             this.error = null;
+            this.searchHistory = [];
             localStorage.removeItem('token');
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('user');
+            try { localStorage.removeItem('search_history'); } catch (_) { /* The shared key is unused after logout. */ }
         },
         async fetchWithAuth(url, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...options.headers };

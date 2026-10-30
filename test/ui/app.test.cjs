@@ -7,14 +7,19 @@ const source = fs.readFileSync(path.join(__dirname, '../../templates/assets/app.
 
 function createApp() {
     const saved = new Map();
-    const context = vm.createContext({
-        AbortController, DOMException, URLSearchParams, setTimeout, clearTimeout,
+    const sandbox = {
+        AbortController, DOMException, URLSearchParams, setTimeout, clearTimeout, Map, Set, JSON, Promise,
+        fetch: async () => { throw new Error('unexpected fetch'); },
+        URL: { createObjectURL: () => 'blob:asset', revokeObjectURL() {} },
         localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
-    });
+    };
+    const context = vm.createContext(sandbox);
     vm.runInContext(source, context);
     const app = context.app();
     app.token = 'test-token';
     app.$nextTick = () => {};
+    app.storage = saved;
+    app.sandbox = sandbox;
     return app;
 }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -92,6 +97,73 @@ test('signing out cancels searches and clears dictionary content', async () => {
     assert.equal(app.results.length, 0);
     assert.equal(app.token, null);
     assert.equal(app.loading, false);
+});
+
+test('search history stays with the account and is hidden after logout', () => {
+    const app = createApp();
+    app.storage.set('search_history', JSON.stringify(['shared']));
+    app.user = { id: 'user-a' };
+    app.addToHistory('secret');
+    app.loadHistory();
+    assert.equal(app.storage.has('search_history'), false);
+    assert.equal(app.searchHistory.join(','), 'secret');
+    app.logout();
+    assert.equal(app.searchHistory.length, 0);
+    app.user = { id: 'user-b' };
+    app.loadHistory();
+    assert.equal(app.searchHistory.length, 0);
+    app.user = { id: 'user-a' };
+    app.loadHistory();
+    assert.equal(app.searchHistory.join(','), 'secret');
+});
+
+test('an older dictionary list cannot overwrite a newer one', async () => {
+    const app = createApp(), first = deferred(), second = deferred();
+    let calls = 0;
+    app.fetchWithAuth = () => ++calls === 1 ? first.promise : second.promise;
+    const older = app.loadDicts();
+    const newer = app.loadDicts();
+    second.resolve({ code: 0, data: [{ id: 'new', is_enabled: true }] });
+    await newer;
+    first.resolve({ code: 0, data: [{ id: 'old', is_enabled: true }] });
+    await older;
+    assert.equal(app.dicts[0].id, 'new');
+});
+
+test('definition media is fetched with the session token', async () => {
+    const app = createApp();
+    app.token = 'session-token';
+    const seen = [];
+    app.sandbox.fetch = async (url, options) => {
+        seen.push({ url, authorization: options.headers.Authorization });
+        return { ok: true, status: 200, blob: async () => ({}) };
+    };
+    const attrs = new Map();
+    let style = 'p{background:url("/api/v1/assets/dict/bg.png")}';
+    const element = {
+        _renderGeneration: 1,
+        querySelectorAll(selector) {
+            if (selector === 'style') {
+                return [{ get textContent() { return style; }, set textContent(value) { style = value; } }];
+            }
+            return [{
+                getAttribute: name => name === 'src' ? '/api/v1/assets/dict/\\a.png' : null,
+                setAttribute: (name, value) => attrs.set(name, value),
+            }];
+        },
+    };
+    await app.hydrateAssets(element, 1, element);
+    app.$refs = { audioPlayer: { src: '', async play() {} } };
+    await app.playAudio('/api/v1/assets/dict/\\hello.mp3');
+    assert.equal(attrs.get('src'), 'blob:asset');
+    assert.match(style, /blob:asset/);
+    assert.equal(app.$refs.audioPlayer.src, 'blob:asset');
+    assert.deepEqual(seen.map(item => item.url), [
+        '/api/v1/assets/dict/a.png',
+        '/api/v1/assets/dict/bg.png',
+        '/api/v1/assets/dict/hello.mp3',
+    ]);
+    assert.ok(seen.every(item => item.authorization === 'Bearer session-token'));
 });
 
 test('arrow keys select the first or last suggestion and wrap', () => {
