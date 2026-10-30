@@ -92,6 +92,7 @@ func main() {
 	// Serve static files (templates)
 	router.StaticFile("/", "./templates/index.html")
 	router.StaticFile("/admin", "./templates/admin.html")
+	router.Static("/static", "./templates/assets")
 
 	// API routes
 	api := router.Group("/api/v1")
@@ -106,8 +107,8 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware.RequireAuth())
 		{
-		auth.POST("/auth/logout", authHandler.Logout)
-		auth.PUT("/users/me/password", userHandler.ChangePassword)
+			auth.POST("/auth/logout", authHandler.Logout)
+			auth.PUT("/users/me/password", userHandler.ChangePassword)
 		}
 
 		// API access routes (JWT or API token)
@@ -118,6 +119,7 @@ func main() {
 			apiAccess.GET("/search", searchHandler.Search)
 			apiAccess.GET("/search/fuzzy", searchHandler.FuzzySearch)
 			apiAccess.GET("/dicts", dictHandler.List)
+			apiAccess.GET("/assets/:id/*path", dictHandler.GetAsset)
 		}
 
 		// Dict admin routes

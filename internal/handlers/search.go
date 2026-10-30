@@ -4,10 +4,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/HW618/mdict-server/internal/dict"
 	markdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/HW618/mdict-server/internal/dict"
 )
 
 // SearchHandler handles search endpoints
@@ -24,7 +25,7 @@ func NewSearchHandler(engine *dict.Engine) *SearchHandler {
 
 // Search handles exact word search
 func (h *SearchHandler) Search(c *gin.Context) {
-	word := c.Query("word")
+	word := strings.TrimSpace(c.Query("word"))
 	if word == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
@@ -75,8 +76,8 @@ func (h *SearchHandler) Search(c *gin.Context) {
 
 // FuzzySearch handles fuzzy word search
 func (h *SearchHandler) FuzzySearch(c *gin.Context) {
-	keyword := c.Query("keyword")
-	if len(keyword) < 2 {
+	keyword := strings.TrimSpace(c.Query("keyword"))
+	if utf8.RuneCountInString(keyword) < 2 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
 			"message": "keyword must be at least 2 characters",
@@ -96,7 +97,7 @@ func (h *SearchHandler) FuzzySearch(c *gin.Context) {
 		pageSize = 20
 	}
 
-	result, err := h.engine.FuzzySearch(keyword, "", page, pageSize)
+	result, err := h.engine.FuzzySearch(keyword, c.Query("dict_id"), page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50001,

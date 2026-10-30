@@ -629,3 +629,28 @@ git push origin feature/your-feature
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | 1.0 | 2026-06-12 | 初始版本 |
+
+
+## 前端样式与搜索回归验证
+
+查询页的交互代码位于 `templates/assets/app.js`，样式源码位于 `templates/ui.css`。
+两页共用本地 CSS 和 Alpine.js；查询页另使用 DOMPurify。运行服务无需访问 CDN，也无需安装 Node.js。
+修改 HTML 中的 Tailwind 类或样式源码后，使用 Node.js 重新生成已纳入版本控制的 CSS：
+
+```bash
+npm exec --yes --package=tailwindcss@3.4.17 -- tailwindcss -i templates/ui.css -o templates/assets/ui.css --content './templates/*.html' --minify
+```
+
+验证命令（Go 1.25+；前端状态测试使用 Node.js 22+，无需安装 npm 依赖）：
+
+```bash
+go test -race ./...
+go vet ./...
+node --test test/ui/app.test.cjs
+go test ./internal/dict -run '^$' -bench BenchmarkFuzzySearch -benchmem
+```
+
+测试覆盖大小写与 Unicode 前缀匹配、分页越界、指定词典、启停和卸载、MDX 加载/重载、
+并发搜索，以及前端请求乱序、清空输入、输入法组合、切换词典、退出登录和键盘选择。
+`internal/dict/testdata` 中的微型 MDX 文件仅含自编测试词条，不含第三方词典数据。
+本次性能分析及基准测试条件见 [查询性能与界面修复记录](search-ui-improvements.md)。

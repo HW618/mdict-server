@@ -3,8 +3,8 @@ package handlers
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/dict"
 	"github.com/HW618/mdict-server/internal/models"
 	"github.com/HW618/mdict-server/internal/store"
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
 
@@ -55,25 +55,25 @@ type chunkedUpload struct {
 // Includes dictionary files (.mdx, .mdd) and resource files (.css, .jpg, etc.)
 // used by dictionary layouts.
 var allowedUploadExts = map[string]bool{
-	".mdx":  true,
-	".mdd":  true,
-	".css":  true,
-	".js":   true,
-	".jpg":  true,
-	".jpeg": true,
-	".png":  true,
-	".gif":  true,
-	".svg":  true,
-	".webp": true,
-	".mp3":  true,
-	".wav":  true,
-	".ogg":  true,
-	".woff": true,
-	".woff2":true,
-	".ttf":  true,
-	".eot":  true,
-	".ico":  true,
-	".pdf":  true,
+	".mdx":   true,
+	".mdd":   true,
+	".css":   true,
+	".js":    true,
+	".jpg":   true,
+	".jpeg":  true,
+	".png":   true,
+	".gif":   true,
+	".svg":   true,
+	".webp":  true,
+	".mp3":   true,
+	".wav":   true,
+	".ogg":   true,
+	".woff":  true,
+	".woff2": true,
+	".ttf":   true,
+	".eot":   true,
+	".ico":   true,
+	".pdf":   true,
 }
 
 // isAllowedUploadExt checks if a file extension is permitted for upload
@@ -163,8 +163,7 @@ func (h *DictHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// Update status in database
-	if err := h.dictStore.UpdateStatus(dictID, req.IsEnabled); err != nil {
+	if err := h.engine.SetEnabled(dictID, req.IsEnabled); err != nil {
 		log.Error().Err(err).Msg("Failed to update dictionary status")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50002,
@@ -172,17 +171,6 @@ func (h *DictHandler) UpdateStatus(c *gin.Context) {
 			"data":    nil,
 		})
 		return
-	}
-
-	// Update in engine
-	if req.IsEnabled {
-		// Reload dictionary
-		if err := h.engine.Reload(dictID); err != nil {
-			log.Error().Err(err).Msg("Failed to reload dictionary")
-		}
-	} else {
-		// Unload dictionary
-		h.engine.Unload(dictID)
 	}
 
 	log.Info().
@@ -555,10 +543,10 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		"code":    0,
 		"message": "Chunk received",
 		"data": gin.H{
-			"chunk_index":  chunkIndex,
-			"chunk_size":   written,
-			"received":     received,
-			"total_parts":  upload.TotalParts,
+			"chunk_index": chunkIndex,
+			"chunk_size":  written,
+			"received":    received,
+			"total_parts": upload.TotalParts,
 		},
 	})
 }
@@ -760,9 +748,7 @@ func (h *DictHandler) UpdateTitle(c *gin.Context) {
 	}
 
 	// Update in-memory loaded dict title
-	if loaded, ok := h.engine.GetDict(dictID); ok {
-		loaded.Info.Title = req.Title
-	}
+	h.engine.SetTitle(dictID, req.Title)
 
 	log.Info().
 		Str("audit", "true").
