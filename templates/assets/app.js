@@ -41,9 +41,10 @@ function app() {
 
         chooseDict(id) {
             this.selectedDict = id;
+            const lookup = (this.searched || this.loading) && this.searchWord.trim();
             this.cancelSuggestions();
             this.cancelSearch();
-            if (this.searched && this.searchWord.trim()) this.search();
+            if (lookup) this.search();
             else this.debouncedFuzzySearch();
         },
 
