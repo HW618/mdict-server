@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/HW618/mdict-server/internal/models"
 	"github.com/HW618/mdict-server/internal/store"
@@ -260,5 +261,66 @@ func TestMDXLoadReloadAndConcurrentSearch(t *testing.T) {
 	result, err = engine.FuzzySearch("ap", primary, 1, 20)
 	if err != nil || result.Total != 3 {
 		t.Fatalf("failed to reload unloaded dictionary: %+v, %v", result, err)
+	}
+}
+
+func TestLoadAllRefreshesReplacedDisabledDictionary(t *testing.T) {
+	database, err := store.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dictStore := store.NewDictStore(database)
+	dir := t.TempDir()
+	primaryPath := filepath.Join(dir, "primary.mdx")
+	original, err := os.ReadFile(filepath.Join("testdata", "primary.mdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(primaryPath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(dir, dictStore)
+	if err := engine.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	id := models.NewDictionary("primary.mdx", 0).ID
+	if err := engine.SetEnabled(id, false); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := os.ReadFile(filepath.Join("testdata", "secondary.mdx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(primaryPath, replacement, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the assertion independent of filesystem timestamp resolution.
+	replacedAt := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(primaryPath, replacedAt, replacedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetEnabled(id, true); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := engine.FuzzySearch("ap", id, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wordsFromResult(result); !reflect.DeepEqual(got, []string{"apple", "application"}) {
+		t.Fatalf("replaced dictionary still serves the previous index: %v", got)
+	}
+	exact, err := engine.Search("application", id)
+	if err != nil || len(exact.Results) != 1 {
+		t.Fatalf("exact lookup did not read the replacement file: %+v, %v", exact, err)
+	}
+	stale, err := engine.Search("apricot", id)
+	if err != nil || len(stale.Results) != 0 {
+		t.Fatalf("exact lookup still serves the previous file: %+v, %v", stale, err)
 	}
 }

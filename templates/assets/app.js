@@ -41,9 +41,10 @@ function app() {
 
         chooseDict(id) {
             this.selectedDict = id;
+            const lookup = (this.searched || this.loading) && this.searchWord.trim();
             this.cancelSuggestions();
             this.cancelSearch();
-            if (this.searched && this.searchWord.trim()) this.search();
+            if (lookup) this.search();
             else this.debouncedFuzzySearch();
         },
 
@@ -81,22 +82,29 @@ function app() {
             this.searchController = controller;
             this.loading = true;
             this.error = null;
-            this.results = [];
-            this.searched = true;
-            this.resultWord = word;
             try {
                 const params = new URLSearchParams({ word });
                 if (dict) params.set('dict_id', dict);
                 const response = await this.fetchWithAuth(`/api/v1/search?${params}`, { signal: controller.signal });
                 if (request !== this.searchRequest) return;
+                this.searched = true;
+                this.resultWord = word;
                 if (response.code === 0) {
                     this.results = response.data.results || [];
                     if (this.results.length) this.addToHistory(word);
-                } else if (response.code !== 40401) {
+                } else if (response.code === 40401) {
+                    this.results = [];
+                } else {
+                    this.results = [];
                     this.error = response.code === 42901 ? '查询太频繁，请稍后再试。' : '查询失败，请检查登录状态后重试。';
                 }
             } catch (error) {
-                if (error.name !== 'AbortError' && request === this.searchRequest) this.error = '网络连接失败，请重试。';
+                if (error.name !== 'AbortError' && request === this.searchRequest) {
+                    this.searched = true;
+                    this.resultWord = word;
+                    this.results = [];
+                    this.error = '网络连接失败，请重试。';
+                }
             } finally {
                 if (request === this.searchRequest) { this.loading = false; this.searchController = null; }
             }

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	mdx "github.com/lib-x/mdx"
@@ -38,11 +39,13 @@ type Engine struct {
 
 // LoadedDict represents a loaded dictionary with its parsed data
 type LoadedDict struct {
-	Info      *models.Dictionary
-	mdxDict   *mdx.Mdict    // MDX dictionary for word lookup
-	mddDict   *mdx.Mdict    // MDD resource file (nil if no .mdd)
-	wordIndex []indexedWord // built once when loading the MDX
-	resDir    string        // directory for standalone resource files (same as .mdx filename without ext)
+	Info       *models.Dictionary
+	mdxDict    *mdx.Mdict    // MDX dictionary for word lookup
+	mddDict    *mdx.Mdict    // MDD resource file (nil if no .mdd)
+	wordIndex  []indexedWord // built once when loading the MDX
+	resDir     string        // directory for standalone resource files (same as .mdx filename without ext)
+	sourceSize int64         // size of the MDX file this index was built from
+	sourceMod  time.Time     // modification time of that MDX file
 }
 
 // NewEngine creates a new dictionary engine
@@ -94,9 +97,13 @@ func (e *Engine) LoadAll() error {
 
 	loadedCount := 0
 	for _, filename := range mdxFiles {
-		// Check if already loaded
+		// Skip only when the in-memory dictionary still matches the file on disk.
+		// Disabling a dictionary leaves it loaded, so a replaced .mdx must be read again.
+		mdxPath := filepath.Join(e.dictDir, filename)
+		fileInfo, statErr := os.Stat(mdxPath)
 		dictID := models.NewDictionary(filename, 0).ID
-		if _, exists := e.dicts[dictID]; exists {
+		if loaded, exists := e.dicts[dictID]; exists && statErr == nil &&
+			loaded.sourceSize == fileInfo.Size() && loaded.sourceMod.Equal(fileInfo.ModTime()) {
 			continue
 		}
 
@@ -180,6 +187,8 @@ func (e *Engine) loadDict(filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
+	sourceSize := fileInfo.Size()
+	sourceMod := fileInfo.ModTime()
 
 	// Create dictionary info
 	dictInfo := models.NewDictionary(filename, fileInfo.Size())
@@ -257,11 +266,13 @@ func (e *Engine) loadDict(filename string) error {
 
 	// Store in memory
 	e.dicts[dictInfo.ID] = &LoadedDict{
-		Info:      dictInfo,
-		mdxDict:   mdxDict,
-		mddDict:   mddDict,
-		wordIndex: wordIndex,
-		resDir:    resDir,
+		Info:       dictInfo,
+		mdxDict:    mdxDict,
+		mddDict:    mddDict,
+		wordIndex:  wordIndex,
+		resDir:     resDir,
+		sourceSize: sourceSize,
+		sourceMod:  sourceMod,
 	}
 
 	log.Info().
