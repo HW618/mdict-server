@@ -2,6 +2,8 @@
 
 This directory contains Claude Code skills that enable AI agents to interact with the mdict-server dictionary service.
 
+MCP clients can connect to the server directly at `/mcp` with the same bearer token. See the MCP section in `docs/usage.md`. This skill remains the curl-based path for agents that do not speak MCP.
+
 ## Available Skills
 
 ### mdict-query

@@ -99,6 +99,12 @@ mdict-server/
 │   │   ├── user.go                 # 用户管理处理器
 │   │   ├── skill.go                # Agent Skill 处理器
 │   │   └── health.go               # 健康检查处理器
+│   ├── mcp/                        # MCP Streamable HTTP 服务
+│   │   ├── service.go
+│   │   ├── tools.go
+│   │   ├── resources.go
+│   │   ├── prompts.go
+│   │   └── format.go
 │   ├── models/
 │   │   ├── user.go                 # 用户模型
 │   │   └── dict.go                 # 词典元数据模型
@@ -1169,6 +1175,22 @@ Content-Disposition: attachment; filename="oxford.mdx"
     "uptime_seconds": 86400
   }
 }
+```
+
+#### 6.3.7 MCP 接口
+
+**POST /mcp**
+
+```
+描述: 无状态 Streamable HTTP MCP 服务。提供 mdict_list_dictionaries、
+      mdict_search_word、mdict_fuzzy_search 三个只读工具，以及词典资源和释义提示。
+认证: 与查询接口相同（JWT 或 mdtk_ API Token，且 can_use_api）
+限流: 与查询接口相同
+
+未认证响应 (401):
+WWW-Authenticate: Bearer realm="mdict"
+
+GET 和 DELETE 返回 405。服务不保留 MCP 会话。
 ```
 
 ---

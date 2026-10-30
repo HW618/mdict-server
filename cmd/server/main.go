@@ -17,6 +17,7 @@ import (
 	"github.com/HW618/mdict-server/internal/config"
 	"github.com/HW618/mdict-server/internal/dict"
 	"github.com/HW618/mdict-server/internal/handlers"
+	"github.com/HW618/mdict-server/internal/mcp"
 	"github.com/HW618/mdict-server/internal/middleware"
 	"github.com/HW618/mdict-server/internal/models"
 	"github.com/HW618/mdict-server/internal/store"
@@ -74,6 +75,7 @@ func main() {
 	userHandler := handlers.NewUserHandler(userStore, jwtManager)
 	skillHandler := handlers.NewSkillHandler(cfg.SkillServerURL)
 	healthHandler := handlers.NewHealthHandler(dictStore, userStore, version)
+	mcpService := mcp.New(dictEngine, dictStore, version)
 
 	// Setup Gin
 	if cfg.LogLevel != "debug" {
@@ -93,6 +95,15 @@ func main() {
 	router.StaticFile("/", "./templates/index.html")
 	router.StaticFile("/admin", "./templates/admin.html")
 	router.Static("/static", "./templates/assets")
+
+	// MCP uses the same bearer token and rate limit as the query API.
+	mcpHandlers := []gin.HandlerFunc{
+		authMiddleware.RequireAPIAccess(),
+		middleware.RateLimit(cfg.RateLimit),
+		gin.WrapH(mcpService.Handler()),
+	}
+	router.Any("/mcp", mcpHandlers...)
+	router.Any("/mcp/", mcpHandlers...)
 
 	// API routes
 	api := router.Group("/api/v1")

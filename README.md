@@ -15,7 +15,7 @@
 - 🎵 **多媒体支持** - 完美渲染图片和音频资源
 - 👥 **用户管理** - 基于角色的访问控制（RBAC）
 - 🔐 **安全认证** - JWT Token 认证机制
-- 🤖 **AI 集成** - 自动生成 Agent Skill 配置文件
+- 🤖 **AI 集成** - MCP 服务，以及自动生成的 Agent Skill 配置文件
 - 🎨 **美观界面** - 现代化 Web 管理面板
 - 🐳 **容器部署** - 支持 Docker 一键部署
 
@@ -145,7 +145,7 @@ An online Mdx/Mdd dictionary query and management service built with Go, support
 - 🎵 **Multimedia Support** - Perfect rendering of images and audio resources
 - 👥 **User Management** - Role-Based Access Control (RBAC)
 - 🔐 **Secure Authentication** - JWT Token authentication
-- 🤖 **AI Integration** - Auto-generate Agent Skill configuration files
+- 🤖 **AI Integration** - MCP server, plus an auto-generated Agent Skill configuration file
 - 🎨 **Beautiful UI** - Modern web admin panel
 - 🐳 **Container Deployment** - Docker one-click deployment
 

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/models"
 	"github.com/HW618/mdict-server/internal/store"
+	"github.com/gin-gonic/gin"
 )
 
 // AuthMiddleware handles authentication
@@ -53,12 +53,7 @@ func (m *AuthMiddleware) RequireAPIAccess() gin.HandlerFunc {
 			// Try to authenticate with API token
 			user, err = m.authenticateWithAPIToken(c)
 			if err != nil {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"code":    40101,
-					"message": "Authentication required",
-					"data":    nil,
-				})
-				c.Abort()
+				m.writeUnauthorized(c)
 				return
 			}
 		}
@@ -188,6 +183,20 @@ func (m *AuthMiddleware) authenticate(c *gin.Context) (*models.User, error) {
 	}
 
 	return user, nil
+}
+
+// writeUnauthorized rejects an MCP or API caller that presented no usable credential.
+// MCP clients on /mcp learn how to retry from the WWW-Authenticate challenge.
+func (m *AuthMiddleware) writeUnauthorized(c *gin.Context) {
+	if c.Request.URL.Path == "/mcp" || strings.HasPrefix(c.Request.URL.Path, "/mcp/") {
+		c.Header("WWW-Authenticate", `Bearer realm="mdict"`)
+	}
+	c.JSON(http.StatusUnauthorized, gin.H{
+		"code":    40101,
+		"message": "Authentication required",
+		"data":    nil,
+	})
+	c.Abort()
 }
 
 // authenticateWithAPIToken authenticates using API token

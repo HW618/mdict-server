@@ -829,6 +829,68 @@ curl -X POST http://localhost:8080/api/v1/users/550e8400-e29b-41d4-a716-44665544
 
 ---
 
+## MCP 服务
+
+`/mcp` 是一个无状态的 [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 端点，供 Cursor、Claude 和其他 MCP 客户端直接查词典。响应使用 `application/json`。服务不保留会话，`GET` 和 `DELETE` 返回 `405`。
+
+**认证：** 与查询接口相同。请求头携带 JWT，或携带 `mdtk_` 开头的 API Token，并且用户具有 `can_use_api` 权限。未认证时返回 `401`，并带 `WWW-Authenticate: Bearer realm="mdict"`。
+
+**限流：** 与查询接口相同，默认每分钟 100 次。
+
+### 客户端配置
+
+```json
+{
+  "mcpServers": {
+    "mdict": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer mdtk_your_token"
+      }
+    }
+  }
+}
+```
+
+### 工具
+
+| 工具 | 作用 |
+|------|------|
+| `mdict_list_dictionaries` | 列出已安装词典，包含 `id`、标题、词条数和启用状态 |
+| `mdict_search_word` | 精确查询一个词条。`dict_id` 可省略，此时查询所有已启用词典 |
+| `mdict_fuzzy_search` | 按前缀列出词头，至少 2 个字符。用 `limit`（默认 20，最大 100）和 `offset`（最大 10000）分页 |
+
+三个工具都是只读的。`response_format` 取 `markdown`（默认）或 `json`。结构化结果始终随响应返回。释义由词典 HTML 转成 Markdown，单条超过 12000 个字符时截断。
+
+词条不存在、词典 ID 不存在或词典已禁用时，工具返回可操作的错误，并指出下一步该调用哪个工具。
+
+### 资源
+
+| URI | 内容 |
+|-----|------|
+| `mdict://dictionaries` | 词典目录，JSON |
+| `mdict://dictionaries/{dict_id}` | 单个词典的元数据，JSON |
+| `mdict://entries/{dict_id}/{word}` | 单个词条，Markdown。词头需要百分号编码 |
+
+### 提示
+
+| 提示 | 参数 | 作用 |
+|------|------|------|
+| `mdict_define_word` | `word`（必填），`dict_id` | 取回词条，并要求模型只根据词条解释 |
+| `mdict_explore_prefix` | `keyword`（必填），`dict_id`，`limit`（1–20，默认 10） | 取回前缀匹配的词头，供用户选择 |
+
+### 连通性检查
+
+```bash
+curl -s http://localhost:8080/mcp \
+  -H "Authorization: Bearer mdtk_your_token" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+---
+
 ## Agent Skill 接口
 
 ### GET /api/v1/skill.json
@@ -995,6 +1057,7 @@ curl http://localhost:8080/api/v1/assets/oxford/audio/hello.mp3 \
 | POST /api/v1/auth/login | 无（公开） |
 | POST /api/v1/auth/refresh | 无（使用 Refresh Token） |
 | POST /api/v1/auth/logout | 需要登录 |
+| POST /mcp | `can_use_api` 或 Web 登录 |
 | GET /api/v1/search* | `can_use_api` 或 Web 登录 |
 | GET /api/v1/dicts | 需要登录 |
 | PATCH /api/v1/dicts/:id/status | `is_dict_admin` |
@@ -1018,7 +1081,7 @@ curl http://localhost:8080/api/v1/assets/oxford/audio/hello.mp3 \
 | 接口类型 | 限流规则 |
 |----------|----------|
 | 登录接口 | 5 次/分钟/IP |
-| 查询接口 | 100 次/分钟/用户 |
+| 查询接口和 `/mcp` | 100 次/分钟/用户 |
 | 管理接口 | 60 次/分钟/用户 |
 | 上传接口 | 10 次/分钟/用户 |
 
@@ -1031,3 +1094,4 @@ curl http://localhost:8080/api/v1/assets/oxford/audio/hello.mp3 \
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | 1.0 | 2026-06-12 | 初始版本 |
+| 1.1 | 2026-10-30 | 增加 `/mcp` Streamable HTTP 服务 |

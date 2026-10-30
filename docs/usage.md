@@ -357,6 +357,31 @@ curl -X DELETE http://localhost:8080/api/v1/users/user-id \
 
 ## Agent 集成
 
+### 在 MCP 客户端中使用
+
+服务器在 `/mcp` 提供词典查询。使用和 REST 查询相同的 Bearer Token。Cursor 或 Claude 的配置示例：
+
+```json
+{
+  "mcpServers": {
+    "mdict": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer mdtk_your_token"
+      }
+    }
+  }
+}
+```
+
+连接后可以直接让客户端查词。它会调用这些工具：
+
+- `mdict_list_dictionaries`：查看已安装词典和词典 ID
+- `mdict_search_word`：查询一个词的释义
+- `mdict_fuzzy_search`：按前缀找词头
+
+也可以打开资源 `mdict://dictionaries`，或使用提示 `mdict_define_word`。接口细节见 [API 文档](api.md#mcp-服务)。
+
 ### 获取 Skill 配置
 
 访问以下地址获取 Agent Skill 配置文件：

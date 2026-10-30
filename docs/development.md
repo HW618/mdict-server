@@ -65,6 +65,12 @@ mdict-server/
 │   │   ├── user.go                 # 用户管理处理器
 │   │   ├── skill.go                # Agent Skill 处理器
 │   │   └── health.go               # 健康检查处理器
+│   ├── mcp/
+│   │   ├── service.go              # MCP Streamable HTTP 服务
+│   │   ├── tools.go                # 查词、模糊查询、词典列表工具
+│   │   ├── resources.go            # 词典与词条资源
+│   │   ├── prompts.go              # 释义与前缀探索提示
+│   │   └── format.go               # Markdown / JSON 输出
 │   ├── models/
 │   │   ├── user.go                 # 用户模型
 │   │   └── dict.go                 # 词典元数据模型
@@ -102,6 +108,7 @@ mdict-server/
 | `internal/auth` | JWT 生成/验证、认证/授权中间件 |
 | `internal/dict` | 词典文件解析、查询算法、缓存管理 |
 | `internal/handlers` | HTTP 请求处理、业务逻辑 |
+| `internal/mcp` | MCP 工具、资源、提示和 Streamable HTTP 传输 |
 | `internal/models` | 数据模型定义、验证规则 |
 | `internal/store` | 数据库操作、数据持久化 |
 | `internal/middleware` | HTTP 中间件（CORS、限流、日志） |
