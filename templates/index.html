@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#173f39">
     <title>Mdict · 你的私人词典</title>
     <link rel="stylesheet" href="/static/ui.css">
+    <link rel="stylesheet" href="/static/vocabulary.css">
     <script defer src="/static/purify.min.js"></script>
     <script defer src="/static/app.js"></script>
     <script defer src="/static/alpine.min.js"></script>
@@ -20,10 +21,11 @@
             </a>
             <nav class="header-nav" aria-label="主导航">
                 <a href="/" class="nav-current" aria-current="page">词典查询</a>
+                <button class="notebook-nav" @click="openVocabulary($event)">生词本</button>
                 <a href="/admin" x-show="user?.permissions?.is_dict_admin || user?.permissions?.is_user_admin" x-cloak>管理后台</a>
             </nav>
             <div class="account-area">
-                <template x-if="user"><div class="account-area"><a class="mobile-admin" href="/admin" x-show="user.permissions?.is_dict_admin || user.permissions?.is_user_admin">管理</a><span class="account-name" x-text="user.username"></span><button class="text-button" @click="logout()">退出</button></div></template>
+                <template x-if="user"><div class="account-area"><button class="mobile-notebook text-button" @click="openVocabulary($event)">生词本</button><a class="mobile-admin" href="/admin" x-show="user.permissions?.is_dict_admin || user.permissions?.is_user_admin">管理</a><span class="account-name" x-text="user.username"></span><button class="text-button" @click="logout()">退出</button></div></template>
                 <button x-show="!user" class="button button-small" @click="openLogin()">登录账户 <span aria-hidden="true">↗</span></button>
             </div>
         </div>
@@ -94,7 +96,21 @@
             <div class="loading-card" x-show="loading" x-cloak role="status"><span class="spinner"></span><span>正在翻阅词典…</span></div>
 
             <section x-show="results.length && !loading" x-cloak aria-label="查询结果" aria-live="polite">
-                <div class="results-heading"><div><span class="eyebrow">DEFINITION</span><h2 x-text="resultWord"></h2></div><span class="result-count" x-text="results.length + ' 本词典收录'"></span></div>
+                <div class="results-heading">
+                    <div class="result-title"><span class="eyebrow">DEFINITION</span>
+                        <div class="result-word-line"><h2 x-text="resultWord"></h2>
+                            <div class="word-notebook">
+                                <div class="vocabulary-stars" role="group" aria-label="生词级别，点击当前星级可移除" @mouseleave="starHover = 0" x-data="{ starHover: 0 }">
+                                    <template x-for="star in 5" :key="star"><button type="button" class="vocabulary-star" :class="star <= (starHover || wordLevel) && 'is-filled'" :disabled="wordLevelLoading || !!wordLevelError || !!vocabularySaving" :aria-pressed="wordLevel === star" :aria-label="wordLevel === star ? '从生词本移除 ' + resultWord : '将 ' + resultWord + ' 保存为 ' + star + ' 级生词'" :title="wordLevel === star ? '再次点击，移出生词本' : '设为 ' + star + ' 级生词'" @mouseenter="starHover = star" @focus="starHover = star" @blur="starHover = 0" @click="setVocabularyLevel(resultWord, star, wordLevel)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.34l-5.7 2.99 1.09-6.34L2.78 9.5l6.37-.93Z"/></svg></button></template>
+                                </div>
+                                <span class="vocabulary-hint" role="status" x-text="wordLevelLoading ? '正在读取…' : vocabularySaving === resultWord.trim().toLowerCase() ? '正在保存…' : wordLevel ? '已加入生词本 · ' + wordLevel + ' 级' : '点击星星，加入生词本'"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="result-count" x-text="results.length + ' 本词典收录'"></span>
+                </div>
+                <p class="vocabulary-feedback" x-show="wordLevelError" role="alert" x-cloak><span x-text="wordLevelError"></span> <button class="text-button" @click="loadVocabularyEntry(resultWord)">重试</button></p>
+                <p class="vocabulary-feedback" x-show="vocabularyError && !showVocabulary" role="alert" x-text="vocabularyError" x-cloak></p>
                 <template x-for="result in results" :key="result.dict_id">
                     <article class="definition-card">
                         <header><h3><span class="status-dot"></span><span x-text="result.dict_name"></span></h3><span>词典释义</span></header>
@@ -124,6 +140,29 @@
                 <p x-show="loginError" class="login-error" role="alert" x-text="loginError"></p>
                 <button type="submit" class="button" :disabled="loginLoading" x-text="loginLoading ? '正在登录…' : '登录账户 →'">登录账户 →</button>
             </form>
+        </section>
+    </div>
+    <div class="modal-backdrop" x-show="showVocabulary" x-cloak @click.self="closeVocabulary()" @keydown.escape.window="if (showVocabulary) closeVocabulary()">
+        <section class="notebook-dialog" role="dialog" aria-modal="true" aria-labelledby="notebook-title" @keydown.tab="trapVocabularyFocus($event)">
+            <button class="dialog-close" @click="closeVocabulary()" aria-label="关闭生词本">×</button>
+            <header class="notebook-header"><h2 id="notebook-title">我的生词本</h2><p>把陌生的词，慢慢变熟悉。</p></header>
+            <form class="notebook-filters" @submit.prevent="loadVocabularyList()">
+                <label class="sr-only" for="notebook-search">查找生词</label><input id="notebook-search" x-ref="vocabularySearch" type="search" x-model="vocabularyKeyword" maxlength="200" placeholder="查找生词…" @input.debounce.250ms="loadVocabularyList()">
+                <label class="sr-only" for="notebook-level">筛选生词级别</label><select id="notebook-level" x-model="vocabularyFilter" @change="loadVocabularyList()"><option value="">全部级别</option><template x-for="level in 5" :key="level"><option :value="String(level)" x-text="'★'.repeat(level) + ' · ' + level + ' 级'"></option></template></select>
+            </form>
+            <p class="vocabulary-feedback" x-show="vocabularyError" role="alert"><span x-text="vocabularyError"></span> <button class="text-button" @click="loadVocabularyList(vocabularyPage)">重试</button></p>
+            <div class="notebook-content" :aria-busy="vocabularyLoading">
+                <p class="notebook-message" x-show="vocabularyLoading" role="status">正在翻开生词本…</p>
+                <p class="notebook-message" x-show="!vocabularyLoading && !vocabularyError && !vocabularyItems.length" x-text="vocabularyKeyword || vocabularyFilter ? '没有符合条件的生词，试试其他筛选。' : '生词本还是空的。查词后点击单词旁的星星，即可收录。'"></p>
+                <ul x-show="!vocabularyLoading && !vocabularyError" aria-label="已保存的生词">
+                    <template x-for="item in vocabularyItems" :key="item.word"><li class="notebook-row">
+                        <button class="notebook-word" @click="queryVocabularyWord(item.word)" :title="'查询 ' + item.word" x-text="item.word"></button>
+                        <div class="vocabulary-stars" role="group" :aria-label="item.word + ' 的生词级别'"><template x-for="star in 5" :key="star"><button type="button" class="vocabulary-star" :class="star <= item.level && 'is-filled'" :disabled="!!vocabularySaving" :aria-pressed="item.level === star" :aria-label="item.level === star ? '从生词本移除 ' + item.word : '将 ' + item.word + ' 设为 ' + star + ' 级'" @click="setVocabularyLevel(item.word, star, item.level)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.34l-5.7 2.99 1.09-6.34L2.78 9.5l6.37-.93Z"/></svg></button></template></div>
+                        <button class="notebook-remove" :disabled="!!vocabularySaving" @click="setVocabularyLevel(item.word, 0, item.level)" :aria-label="'从生词本移除 ' + item.word">移除</button>
+                    </li></template>
+                </ul>
+            </div>
+            <footer class="notebook-footer"><span x-text="'共 ' + vocabularyTotal + ' 个生词'"></span><div class="notebook-pages" x-show="vocabularyTotal > 30"><button :disabled="vocabularyPage <= 1 || vocabularyLoading || !!vocabularySaving" @click="loadVocabularyList(vocabularyPage - 1)">上一页</button><span x-text="vocabularyPage + ' / ' + Math.ceil(vocabularyTotal / 30)"></span><button :disabled="vocabularyPage * 30 >= vocabularyTotal || vocabularyLoading || !!vocabularySaving" @click="loadVocabularyList(vocabularyPage + 1)">下一页</button></div></footer>
         </section>
     </div>
     <audio x-ref="audioPlayer" hidden></audio>

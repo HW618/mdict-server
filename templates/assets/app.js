@@ -8,6 +8,11 @@ function app() {
         fuzzySearchTimeout: null, fuzzyController: null, fuzzyRequest: 0,
         searchController: null, searchRequest: 0, refreshPromise: null, dictRequest: 0,
         searchHistory: [], maxHistorySize: 50, assetBlobs: new Map(),
+        wordLevel: 0, wordLevelLoading: false, wordLevelError: '', vocabularyWordRequest: 0,
+        showVocabulary: false, vocabularyItems: [], vocabularyTotal: 0, vocabularyPage: 1,
+        vocabularyFilter: '', vocabularyKeyword: '', vocabularyLoading: false,
+        vocabularyError: '', vocabularySaving: '', vocabularyListRequest: 0, vocabularySession: 0,
+        vocabularyTrigger: null,
 
         async init() {
             try {
@@ -91,7 +96,10 @@ function app() {
                 this.resultWord = word;
                 if (response.code === 0) {
                     this.results = response.data.results || [];
-                    if (this.results.length) this.addToHistory(word);
+                    if (this.results.length) {
+                        this.addToHistory(word);
+                        this.loadVocabularyEntry(word);
+                    }
                 } else if (response.code === 40401) {
                     this.results = [];
                 } else {
@@ -163,7 +171,7 @@ function app() {
 
         selectSuggestion(word) { this.searchWord = word; this.search(); },
         handleShortcut(event) {
-            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || this.showLogin) return;
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || this.showLogin || this.showVocabulary) return;
             if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
             event.preventDefault();
             this.$refs.searchInput.focus();
@@ -193,6 +201,103 @@ function app() {
         },
         removeFromHistory(word) { this.searchHistory = this.searchHistory.filter(item => item !== word); this.persistHistory(); },
         clearHistory() { this.searchHistory = []; this.persistHistory(); },
+
+        async loadVocabularyEntry(word) {
+            const request = ++this.vocabularyWordRequest;
+            const session = this.vocabularySession;
+            this.wordLevel = 0;
+            this.wordLevelError = '';
+            if (!this.token || !this.user) return;
+            this.wordLevelLoading = true;
+            try {
+                const response = await this.fetchWithAuth(`/api/v1/vocabulary/entry?${new URLSearchParams({ word })}`);
+                if (request !== this.vocabularyWordRequest || session !== this.vocabularySession || word !== this.resultWord) return;
+                if (response.code !== 0) throw new Error('vocabulary');
+                this.wordLevel = response.data?.level || 0;
+            } catch (_) {
+                if (request === this.vocabularyWordRequest && session === this.vocabularySession) this.wordLevelError = '星级加载失败，请重试。';
+            } finally {
+                if (request === this.vocabularyWordRequest && session === this.vocabularySession) this.wordLevelLoading = false;
+            }
+        },
+        async setVocabularyLevel(word, level, currentLevel) {
+            if (!this.token || !this.user) { this.openLogin(); return; }
+            if (this.vocabularySaving) return;
+            const session = this.vocabularySession;
+            const key = word.trim().toLowerCase();
+            const next = level === currentLevel ? 0 : level;
+            this.vocabularySaving = key;
+            this.vocabularyError = '';
+            try {
+                const url = '/api/v1/vocabulary/entry';
+                const response = next === 0
+                    ? await this.fetchWithAuth(`${url}?${new URLSearchParams({ word })}`, { method: 'DELETE' })
+                    : await this.fetchWithAuth(url, { method: 'PUT', body: JSON.stringify({ word, level: next }) });
+                if (session !== this.vocabularySession) return;
+                if (response.code !== 0) throw new Error('save');
+                if (key === this.resultWord.trim().toLowerCase()) {
+                    this.vocabularyWordRequest++;
+                    this.wordLevel = next;
+                    this.wordLevelLoading = false;
+                    this.wordLevelError = '';
+                }
+                if (this.showVocabulary) await this.loadVocabularyList(this.vocabularyPage);
+            } catch (_) {
+                if (session === this.vocabularySession) this.vocabularyError = '生词本保存失败，请重试。';
+            } finally {
+                if (session === this.vocabularySession) this.vocabularySaving = '';
+            }
+        },
+        openVocabulary(event) {
+            if (!this.token) { this.openLogin(); return; }
+            this.vocabularyTrigger = event?.currentTarget || null;
+            this.showVocabulary = true;
+            this.vocabularyError = '';
+            this.loadVocabularyList();
+            this.$nextTick(() => this.$refs.vocabularySearch.focus());
+        },
+        closeVocabulary() {
+            this.showVocabulary = false;
+            this.vocabularyListRequest++;
+            this.vocabularyTrigger?.focus();
+        },
+        async loadVocabularyList(page = 1) {
+            if (!this.token || !this.user) return;
+            const request = ++this.vocabularyListRequest;
+            const session = this.vocabularySession;
+            this.vocabularyPage = page;
+            this.vocabularyLoading = true;
+            this.vocabularyError = '';
+            const params = new URLSearchParams({ page: String(page), page_size: '30', keyword: this.vocabularyKeyword });
+            if (this.vocabularyFilter) params.set('level', this.vocabularyFilter);
+            try {
+                const response = await this.fetchWithAuth(`/api/v1/vocabulary?${params}`);
+                if (request !== this.vocabularyListRequest || session !== this.vocabularySession) return;
+                if (response.code !== 0) throw new Error('list');
+                this.vocabularyItems = response.data.items || [];
+                this.vocabularyTotal = response.data.total || 0;
+                if (!this.vocabularyItems.length && page > 1 && this.vocabularyTotal > 0) await this.loadVocabularyList(page - 1);
+            } catch (_) {
+                if (request === this.vocabularyListRequest && session === this.vocabularySession) {
+                    this.vocabularyItems = [];
+                    this.vocabularyError = '生词本加载失败，请重试。';
+                }
+            } finally {
+                if (request === this.vocabularyListRequest && session === this.vocabularySession) this.vocabularyLoading = false;
+            }
+        },
+        queryVocabularyWord(word) {
+            this.closeVocabulary();
+            this.selectSuggestion(word);
+            this.$refs.searchInput.focus();
+        },
+        trapVocabularyFocus(event) {
+            const items = [...event.currentTarget.querySelectorAll('button:not(:disabled), input, select')].filter(el => el.offsetParent !== null);
+            const first = items[0], last = items[items.length - 1];
+            if (!first) return;
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        },
 
         sanitizeHtml(html) {
             return DOMPurify.sanitize(html || '', {
@@ -304,6 +409,19 @@ function app() {
             finally { this.loginLoading = false; }
         },
         logout() {
+            this.vocabularySession++;
+            this.vocabularyWordRequest++;
+            this.vocabularyListRequest++;
+            this.wordLevel = 0;
+            this.wordLevelLoading = false;
+            this.wordLevelError = '';
+            this.showVocabulary = false;
+            this.vocabularyItems = [];
+            this.vocabularyTotal = 0;
+            this.vocabularyFilter = '';
+            this.vocabularyKeyword = '';
+            this.vocabularySaving = '';
+            this.vocabularyError = '';
             this.cancelSuggestions();
             this.cancelSearch();
             this.dictRequest++;

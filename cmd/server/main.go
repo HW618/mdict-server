@@ -73,6 +73,7 @@ func main() {
 	searchHandler := handlers.NewSearchHandler(dictEngine)
 	dictHandler := handlers.NewDictHandler(dictEngine, dictStore, cfg.DictDir, cfg.MaxUploadSizeBytes)
 	userHandler := handlers.NewUserHandler(userStore, jwtManager)
+	vocabularyHandler := handlers.NewVocabularyHandler(store.NewVocabularyStore(sqliteStore))
 	skillHandler := handlers.NewSkillHandler(cfg.SkillServerURL)
 	healthHandler := handlers.NewHealthHandler(dictStore, userStore, version)
 	mcpService := mcp.New(dictEngine, dictStore, version)
@@ -122,6 +123,10 @@ func main() {
 			auth.PUT("/users/me/password", userHandler.ChangePassword)
 			auth.GET("/users/me", userHandler.GetCurrentUser)
 			auth.GET("/users/:id/mcp", userHandler.GetMCPConnection)
+			auth.GET("/vocabulary", vocabularyHandler.List)
+			auth.GET("/vocabulary/entry", vocabularyHandler.Get)
+			auth.PUT("/vocabulary/entry", vocabularyHandler.Set)
+			auth.DELETE("/vocabulary/entry", vocabularyHandler.Delete)
 		}
 
 		// API access routes (JWT or API token)

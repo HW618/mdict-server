@@ -85,6 +85,17 @@ func (s *SQLiteStore) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`,
+		`CREATE TABLE IF NOT EXISTS vocabulary (
+			user_id TEXT NOT NULL,
+			word_key TEXT NOT NULL,
+			word TEXT NOT NULL,
+			level INTEGER NOT NULL CHECK(level BETWEEN 1 AND 5),
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, word_key),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_vocabulary_user_updated ON vocabulary(user_id, updated_at DESC)`,
 	}
 
 	for _, migration := range migrations {

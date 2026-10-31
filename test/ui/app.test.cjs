@@ -231,3 +231,52 @@ test('arrow keys select the first or last suggestion and wrap', () => {
     app.activeSuggestion = -1;
     app.moveSuggestion(1); assert.equal(app.activeSuggestion, 0);
 });
+
+test('stars save the chosen level and clicking the current level removes the word', async () => {
+    const app = createApp(); app.user = { id: 'a' }; app.resultWord = 'apple';
+    const requests = [];
+    app.fetchWithAuth = async (url, options = {}) => {
+        requests.push({ url, ...options });
+        return { code: 0, data: { word: 'apple', level: options.method === 'DELETE' ? 0 : 3 } };
+    };
+    await app.setVocabularyLevel('apple', 3, 0);
+    assert.equal(app.wordLevel, 3);
+    assert.equal(JSON.parse(requests[0].body).level, 3);
+    await app.setVocabularyLevel('apple', 3, 3);
+    assert.equal(requests[1].method, 'DELETE');
+    assert.equal(app.wordLevel, 0);
+});
+
+test('late vocabulary state cannot replace a newer result or survive logout', async () => {
+    const app = createApp(), old = deferred(); app.user = { id: 'a' }; app.resultWord = 'apple';
+    app.fetchWithAuth = () => old.promise;
+    const pending = app.loadVocabularyEntry('apple');
+    app.resultWord = 'banana';
+    app.fetchWithAuth = async () => ({ code: 0, data: { word: 'banana', level: 2 } });
+    await app.loadVocabularyEntry('banana');
+    old.resolve({ code: 0, data: { word: 'apple', level: 5 } }); await pending;
+    assert.equal(app.wordLevel, 2);
+    app.logout();
+    assert.equal(app.wordLevel, 0);
+    assert.equal(app.vocabularyItems.length, 0);
+    assert.equal(app.showVocabulary, false);
+});
+
+test('failed saves leave the previous level intact and show a retryable error', async () => {
+    const app = createApp(); app.user = { id: 'a' }; app.resultWord = 'apple'; app.wordLevel = 2;
+    app.fetchWithAuth = async () => { throw new Error('offline'); };
+    await app.setVocabularyLevel('apple', 5, 2);
+    assert.equal(app.wordLevel, 2);
+    assert.ok(app.vocabularyError);
+    assert.equal(app.vocabularySaving, '');
+});
+
+test('logout during a pending save never exposes the previous account notebook', async () => {
+    const app = createApp(), saving = deferred(); app.user = { id: 'a' }; app.resultWord = 'apple';
+    app.fetchWithAuth = () => saving.promise;
+    const pending = app.setVocabularyLevel('apple', 5, 0);
+    app.logout(); app.user = { id: 'b' }; app.token = 'b-token';
+    saving.resolve({ code: 0, data: { word: 'apple', level: 5 } }); await pending;
+    assert.equal(app.wordLevel, 0);
+    assert.equal(app.vocabularyItems.length, 0);
+});
