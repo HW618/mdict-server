@@ -1,0 +1,226 @@
+//
+// Copyright (C) 2023 Quan Chen <chenquan_act@163.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+package mdx
+
+import (
+	"bytes"
+	"compress/zlib"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strings"
+	"unicode/utf16"
+
+	"github.com/c0mm4nd/go-ripemd"
+	"golang.org/x/text/encoding/unicode"
+)
+
+var comparableKeyPattern = regexp.MustCompile(`[\s:.,\-_'"()#<>!]+`)
+var resourceSeparatorReplacer = strings.NewReplacer("/", `\`)
+
+func decodeLittleEndianUtf16(raw []byte) (string, error) {
+	decoder := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder()
+	bs2, err := decoder.Bytes(raw[:])
+	if err != nil {
+		return "", err
+	}
+	return string(bs2), nil
+}
+
+func littleEndianBinUTF16ToUTF8(bytes []byte, offset int, length int) string {
+	cbytes := make([]byte, length)
+	copy(cbytes, bytes[offset:])
+	wcbytes := make([]uint16, len(cbytes)/2)
+	for i := 0; i < len(wcbytes); i++ {
+		wcbytes[i] = uint16(cbytes[i*2]) | uint16(cbytes[i*2+1])<<8
+	}
+	u8 := utf16.Decode(wcbytes)
+	return string(u8)
+}
+
+func min(a, b int) int {
+	if a > b {
+		return b
+	}
+	return a
+}
+
+func bigEndianBinToUTF8(bytes []byte, offset int, length int) string {
+	cbytes := make([]byte, length)
+	rawLen := len(bytes)
+	length = min(rawLen, length)
+	copy(cbytes, bytes[offset:offset+length])
+	return string(cbytes)
+}
+
+func beBinToU64(bin []byte) uint64 {
+	var n uint64 = 0
+	for i := 0; i < 7; i++ {
+		n = n | uint64(bin[i])
+		n = n << 8
+	}
+	n = n | uint64(bin[7])
+	return n
+}
+
+func beBinToU32(bin []byte) uint32 {
+	var n uint32 = 0
+	for i := 0; i < 3; i++ {
+		n = n | uint32(bin[i])
+		n = n << 8
+	}
+	n = n | uint32(bin[3])
+	return n
+}
+
+func beBinToU16(bin []byte) uint16 {
+	var n uint16 = 0
+	for i := 0; i < 1; i++ {
+		n = n | uint16(bin[i])
+		n = n << 8
+	}
+	n = n | uint16(bin[1])
+	return n
+}
+
+func beBinToU8(bin []byte) uint8 {
+	return uint8(bin[0] & 255)
+}
+
+func closeFile(file *os.File) {
+	if err := file.Close(); err != nil {
+		log.Warningf("failed to close file %s: %v", file.Name(), err)
+	}
+}
+
+func readFileFromPos(file *os.File, start, length int64) ([]byte, error) {
+	if start < 0 {
+		return nil, fmt.Errorf("invalid read start offset %d", start)
+	}
+	if length < 0 {
+		return nil, fmt.Errorf("invalid read length %d", length)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat file before read: %w", err)
+	}
+	fileSize := info.Size()
+	if start > fileSize {
+		return nil, fmt.Errorf("read start offset %d exceeds file size %d", start, fileSize)
+	}
+	if length > fileSize-start {
+		return nil, fmt.Errorf(
+			"read length %d from offset %d exceeds file size %d",
+			length,
+			start,
+			fileSize,
+		)
+	}
+
+	// Set the pointer to the requested byte from the start of the file.
+	_, err = file.Seek(start, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read length bytes from the current pointer position.
+	data := make([]byte, length)
+	_, err = io.ReadFull(file, data)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func zlibDecompress(data []byte, from, len int64) ([]byte, error) {
+	b := bytes.NewReader(data[from : from+len])
+	z, err := zlib.NewReader(b)
+	if err != nil {
+		return nil, err
+	}
+	p, readErr := io.ReadAll(z)
+	closeErr := z.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return p, nil
+}
+
+/**
+ *
+ * decrypt the data, this is a helper function to invoke the fast_decrypt
+ * note: don't forget free comp_block !!
+ *
+ * @param comp_block compressed block buffer
+ * @param comp_block_len compressed block buffer size
+ * @return the decrypted compressed block
+ */
+func mdxDecrypt(compBlock []byte, compBlockLen int64) []byte {
+	keyBuffer := make([]byte, 8)
+	copy(keyBuffer, compBlock[4:8])
+	keyBuffer[4] = 0x95
+	keyBuffer[5] = 0x36
+	key := ripemd128bytes(keyBuffer)
+	fastDecrypt(compBlock[8:], key, compBlockLen-8, 16)
+
+	return compBlock
+}
+
+func fastDecrypt(data []byte, k []byte, dataLen int64, keyLen int64) {
+	key := k
+
+	b := data
+	previous := byte(0x36)
+	for i := int64(0); i < dataLen; i++ {
+		t := byte((b[i]>>4 | b[i]<<4) & 0xff)
+		t = t ^ previous ^ byte(i&0xff) ^ key[i%keyLen]
+		previous = b[i]
+		b[i] = t
+	}
+}
+
+func ripemd128bytes(data []byte) []byte {
+	md := ripemd.New128()
+	md.Write(data)
+	out := md.Sum(nil)
+	md.Reset()
+	return out
+}
+
+func normalizeComparableKey(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+	return comparableKeyPattern.ReplaceAllString(trimmed, "")
+}
+
+func normalizeResourceComparableKey(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	trimmed = strings.TrimPrefix(trimmed, `\`)
+	trimmed = resourceSeparatorReplacer.Replace(trimmed)
+	return trimmed
+}

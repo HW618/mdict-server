@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/HW618/mdict-server/internal/models"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // JWTManager handles JWT token generation and validation
@@ -26,18 +29,20 @@ func NewJWTManager(secret string, accessTTL, refreshTTL time.Duration) *JWTManag
 
 // Claims represents JWT claims
 type Claims struct {
-	UserID      string                `json:"sub"`
-	Username    string                `json:"username"`
-	Permissions models.UserPermissions `json:"permissions"`
+	PasswordVersion string                 `json:"pv"`
+	UserID          string                 `json:"sub"`
+	Username        string                 `json:"username"`
+	Permissions     models.UserPermissions `json:"permissions"`
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken generates a new access token
 func (m *JWTManager) GenerateAccessToken(user *models.User) (string, error) {
 	claims := Claims{
-		UserID:      user.ID,
-		Username:    user.Username,
-		Permissions: user.Permissions(),
+		PasswordVersion: m.passwordVersion(user),
+		UserID:          user.ID,
+		Username:        user.Username,
+		Permissions:     user.Permissions(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.accessTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -59,8 +64,9 @@ func (m *JWTManager) GenerateAccessToken(user *models.User) (string, error) {
 // GenerateRefreshToken generates a new refresh token
 func (m *JWTManager) GenerateRefreshToken(user *models.User) (string, error) {
 	claims := Claims{
-		UserID:   user.ID,
-		Username: user.Username,
+		PasswordVersion: m.passwordVersion(user),
+		UserID:          user.ID,
+		Username:        user.Username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.refreshTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -109,4 +115,14 @@ func (m *JWTManager) GetAccessTTL() time.Duration {
 // GetRefreshTTL returns the refresh token TTL
 func (m *JWTManager) GetRefreshTTL() time.Duration {
 	return m.refreshTTL
+}
+
+// MatchesUser rejects login tokens issued before the user's password changed.
+func (m *JWTManager) MatchesUser(claims *Claims, user *models.User) bool {
+	return hmac.Equal([]byte(claims.PasswordVersion), []byte(m.passwordVersion(user)))
+}
+func (m *JWTManager) passwordVersion(user *models.User) string {
+	mac := hmac.New(sha256.New, m.secret)
+	mac.Write([]byte(user.Password))
+	return hex.EncodeToString(mac.Sum(nil))
 }

@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Copy go mod files
 COPY go.mod go.sum ./
+COPY third_party/mdx/go.mod ./third_party/mdx/go.mod
 
 # Download dependencies
 RUN go mod download
@@ -18,7 +19,7 @@ COPY . .
 
 # Build static binary (CGO_ENABLED=1 needed for go-sqlite3)
 ARG TARGETOS TARGETARCH
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=mod \
     -ldflags="-w -s" \
     -o /app/mdict-server \
     ./cmd/server
@@ -60,7 +61,7 @@ VOLUME ["/dicts", "/data"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD su-exec mdict wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
+    CMD su-exec mdict wget --no-verbose --tries=1 -O /dev/null http://localhost:8080/api/v1/health || exit 1
 
 # Run
 ENTRYPOINT ["/docker-entrypoint.sh"]

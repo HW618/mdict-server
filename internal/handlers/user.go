@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/auth"
 	"github.com/HW618/mdict-server/internal/models"
 	"github.com/HW618/mdict-server/internal/store"
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -541,4 +541,25 @@ func generateRandomPassword(length int) (string, error) {
 	}
 
 	return string(result), nil
+}
+
+// GetMCPConnection returns connection details only to the owner or a user administrator.
+func (h *UserHandler) GetMCPConnection(c *gin.Context) {
+	actor, ok := auth.GetUserFromContext(c)
+	if !ok {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	id := c.Param("id")
+	if actor.ID != id && !actor.CanManageUsers() {
+		c.JSON(http.StatusForbidden, gin.H{"code": 40301, "message": "Forbidden"})
+		return
+	}
+	user, err := h.userStore.GetByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 40401, "message": "User not found"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": gin.H{"username": user.Username, "api_token": user.APIToken, "can_use_api": user.CanUseAPI || user.IsAdmin()}})
 }

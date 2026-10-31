@@ -226,6 +226,7 @@ func (h *DictHandler) Upload(c *gin.Context) {
 
 	var results []uploadResult
 	var needReloadMdx []string // .mdx filenames that need loading
+	var mdxResultIndexes []int
 	var needReloadMdd []string // .mdd filenames whose .mdx needs reloading
 
 	for i, header := range files {
@@ -333,6 +334,7 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		switch ext {
 		case ".mdx":
 			needReloadMdx = append(needReloadMdx, reloadPath)
+			mdxResultIndexes = append(mdxResultIndexes, len(results)-1)
 		case ".mdd":
 			needReloadMdd = append(needReloadMdd, reloadPath)
 		}
@@ -346,10 +348,11 @@ func (h *DictHandler) Upload(c *gin.Context) {
 			Msg("File uploaded")
 	}
 
-	// Load new .mdx dictionaries
-	if len(needReloadMdx) > 0 {
-		if err := h.engine.LoadAll(); err != nil {
-			log.Error().Err(err).Msg("Failed to reload dictionaries after upload")
+	// Report errors for each dictionary, instead of silently accepting an unloadable file.
+	for i, name := range needReloadMdx {
+		if err := h.engine.LoadFile(name); err != nil {
+			log.Error().Err(err).Str("filename", name).Msg("Failed to load uploaded dictionary")
+			results[mdxResultIndexes[i]].Error = "词典解析失败: " + err.Error()
 		}
 	}
 
@@ -430,6 +433,11 @@ func (h *DictHandler) UploadInit(c *gin.Context) {
 		return
 	}
 
+	if req.FileSize <= 0 || req.ChunkSize <= 0 || req.ChunkSize > 64*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid file or chunk size"})
+		return
+	}
+
 	if h.maxUploadBytes > 0 && req.FileSize > h.maxUploadBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": 41301, "message": fmt.Sprintf("File too large (max %d MB)", h.maxUploadBytes/(1024*1024)), "data": nil})
 		return
@@ -437,7 +445,11 @@ func (h *DictHandler) UploadInit(c *gin.Context) {
 
 	// Check if .mdx already exists
 	if ext == ".mdx" {
-		exists, err := h.dictStore.ExistsByFilename(safeFilename)
+		checkFilename := safeFilename
+		if relativePath != "" {
+			checkFilename = relativePath
+		}
+		exists, err := h.dictStore.ExistsByFilename(checkFilename)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 50002, "message": "Failed to check dictionary existence", "data": nil})
 			return
@@ -526,11 +538,15 @@ func (h *DictHandler) UploadChunk(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to save chunk", "data": nil})
 		return
 	}
-	written, err := io.Copy(tmpFile, file)
+	expectedSize := upload.ChunkSize
+	if remaining := upload.TotalSize - int64(chunkIndex)*upload.ChunkSize; remaining < expectedSize {
+		expectedSize = remaining
+	}
+	written, err := io.Copy(tmpFile, io.LimitReader(file, expectedSize+1))
 	_ = tmpFile.Close()
-	if err != nil {
+	if err != nil || written != expectedSize {
 		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "message": "Failed to save chunk", "data": nil})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Invalid chunk size", "data": nil})
 		return
 	}
 
@@ -637,6 +653,13 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	}
 	_ = outFile.Close()
 
+	if totalWritten != upload.TotalSize {
+		_ = os.Remove(tmpDst)
+		h.cleanupChunks(upload)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": "Uploaded file size mismatch"})
+		return
+	}
+
 	// Clean up any remaining chunk temp files and .uploads directory
 	h.cleanupChunks(upload)
 
@@ -651,11 +674,21 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	ext := strings.ToLower(filepath.Ext(upload.Filename))
 	switch ext {
 	case ".mdx":
-		if err := h.engine.LoadAll(); err != nil {
-			log.Error().Err(err).Msg("Failed to reload dictionaries")
+		name := upload.Filename
+		if upload.RelativePath != "" {
+			name = upload.RelativePath
+		}
+		if err := h.engine.LoadFile(name); err != nil {
+			log.Error().Err(err).Str("filename", name).Msg("Failed to load uploaded dictionary")
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": 42201, "message": "词典解析失败: " + err.Error()})
+			return
 		}
 	case ".mdd":
-		dictID := h.findDictIDByMdd(upload.Filename)
+		mddName := upload.Filename
+		if upload.RelativePath != "" {
+			mddName = upload.RelativePath
+		}
+		dictID := h.findDictIDByMdd(mddName)
 		if dictID != "" {
 			if err := h.engine.Reload(dictID); err != nil {
 				log.Error().Err(err).Str("dict_id", dictID).Msg("Failed to reload dictionary after .mdd upload")

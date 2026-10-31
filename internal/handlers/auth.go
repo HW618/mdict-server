@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/HW618/mdict-server/internal/auth"
 	"github.com/HW618/mdict-server/internal/store"
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -186,7 +186,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Verify token belongs to user
-	if claims.UserID != user.ID {
+	if claims.UserID != user.ID || !user.IsActive || !h.jwtManager.MatchesUser(claims, user) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    40103,
 			"message": "Token user mismatch",

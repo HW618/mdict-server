@@ -177,6 +177,11 @@ func (m *AuthMiddleware) authenticate(c *gin.Context) (*models.User, error) {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
 
+	// A password change invalidates previously issued login tokens.
+	if !m.jwtManager.MatchesUser(claims, user) {
+		return nil, fmt.Errorf("credentials changed")
+	}
+
 	// Check if user is active
 	if !user.IsActive {
 		return nil, fmt.Errorf("user account is disabled")

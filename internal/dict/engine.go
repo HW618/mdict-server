@@ -129,6 +129,17 @@ func (e *Engine) LoadAll() error {
 	return nil
 }
 
+// LoadFile loads one uploaded dictionary and reports parsing or storage errors.
+func (e *Engine) LoadFile(filename string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.loadDict(filename); err != nil {
+		return err
+	}
+	e.rebuildWordIndex()
+	return nil
+}
+
 // disableOrphans marks DB records as disabled when the corresponding .mdx file no longer exists on disk.
 func (e *Engine) disableOrphans() error {
 	allDicts, err := e.dictStore.List()

@@ -120,6 +120,8 @@ func main() {
 		{
 			auth.POST("/auth/logout", authHandler.Logout)
 			auth.PUT("/users/me/password", userHandler.ChangePassword)
+			auth.GET("/users/me", userHandler.GetCurrentUser)
+			auth.GET("/users/:id/mcp", userHandler.GetMCPConnection)
 		}
 
 		// API access routes (JWT or API token)

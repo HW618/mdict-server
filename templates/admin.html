@@ -191,13 +191,16 @@
                                     </td>
                                     <td class="px-4 py-3">
                                     <div class="flex space-x-2">
+                                        <button @click="openMCP(u)" class="text-blue-600 hover:text-blue-800 text-sm">MCP</button>
                                         <button
+                                            x-show="isAdmin"
                                             @click="openResetPassword(u)"
                                             class="text-blue-600 hover:text-blue-800 text-sm"
                                         >
                                             修改密码
                                         </button>
                                         <button
+                                            x-show="isAdmin"
                                             @click="resetToken(u)"
                                                 class="text-blue-600 hover:text-blue-800 text-sm"
                                             >
@@ -206,7 +209,7 @@
                                             <button
                                                 @click="deleteUser(u)"
                                                 class="text-red-600 hover:text-red-800 text-sm"
-                                                x-show="!u.permissions.is_user_admin"
+                                                x-show="isAdmin && !u.permissions.is_user_admin"
                                             >
                                                 删除
                                             </button>
@@ -355,6 +358,17 @@
         </div>
     </div>
 
+    <div x-show="showMCP" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-xl mx-4">
+            <h3 class="text-lg font-bold mb-3">MCP 连接信息</h3>
+            <p class="text-sm mb-2" x-text="mcpUser ? '用户：' + mcpUser : ''"></p>
+            <p class="text-sm text-gray-600 mb-2">Streamable HTTP；请妥善保管令牌。</p>
+            <p x-show="mcpUnavailable" class="text-sm text-red-600 mb-2">该用户尚未获得 API 访问权限。</p>
+            <pre class="bg-gray-100 rounded p-3 text-xs overflow-auto" x-text="mcpConfig"></pre>
+            <div class="flex justify-end gap-3 mt-4"><button @click="copyToken(mcpConfig)" class="text-blue-600">复制配置</button><button @click="showMCP = false; mcpConfig = ''" class="text-gray-600">关闭</button></div>
+        </div>
+    </div>
+
     <!-- Change Password Modal (current user) -->
     <div x-show="showChangePassword" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
@@ -465,6 +479,7 @@
                 uploadStatusText: '',
                 uploadLoaded: '',
                 uploadTotal: '',
+                showMCP: false, mcpConfig: "", mcpUser: "", mcpUnavailable: false,
                 showChangePassword: false,
                 changePasswordForm: { old_password: '', new_password: '', confirm_password: '' },
                 changePasswordError: null,
@@ -517,7 +532,7 @@
 
                 async loadUsers() {
                     try {
-                        const response = await this.fetchWithAuth('/api/v1/users');
+                        const response = await this.fetchWithAuth(this.isAdmin ? '/api/v1/users' : '/api/v1/users/me');
                         if (response.code === 0) {
                             this.users = response.data || [];
                         }
@@ -647,11 +662,8 @@
                             };
 
                             xhr.onload = () => {
-                                if (xhr.status === 200) {
-                                    resolve(JSON.parse(xhr.responseText));
-                                } else {
-                                    reject(new Error(`HTTP ${xhr.status}`));
-                                }
+                                try { resolve(JSON.parse(xhr.responseText)); }
+                                catch (_) { reject(new Error(`HTTP ${xhr.status}`)); }
                             };
                             xhr.onerror = () => reject(new Error('Network error'));
                             xhr.ontimeout = () => reject(new Error('Request timeout'));
@@ -668,7 +680,8 @@
                                 }
                             }
                         } else {
-                            alert(result.message || '上传失败');
+                            const errors = (result.data || []).filter(r => r.error).map(r => `${r.filename}: ${r.error}`).join('\n');
+                            alert(errors || result.message || '上传失败');
                         }
                     } catch (e) {
                         alert('上传失败: ' + e.message);
@@ -712,7 +725,12 @@
                         const totalParts = initResp.data.total_parts;
 
                         // Upload chunks with retry
-                        for (let i = 0; i < totalParts; i++) {
+                        let nextPart = 0;
+                        let completedBytes = 0;
+                        let completedParts = 0;
+                        const uploadPart = async () => {
+                          while (nextPart < totalParts) {
+                            const i = nextPart++;
                             const start = i * CHUNK_SIZE;
                             const end = Math.min(start + CHUNK_SIZE, file.size);
                             const chunk = file.slice(start, end);
@@ -737,7 +755,8 @@
                                             if (xhr.status === 200) {
                                                 resolve(JSON.parse(xhr.responseText));
                                             } else {
-                                                reject(new Error(`HTTP ${xhr.status}`));
+                                                let message; try { message = JSON.parse(xhr.responseText).message; } catch (_) {}
+                                    reject(new Error(message || `HTTP ${xhr.status}`));
                                             }
                                         };
                                         xhr.onerror = () => reject(new Error('Network error'));
@@ -764,9 +783,14 @@
                                 throw new Error(`分片 ${i + 1}/${totalParts} 上传失败: ${lastError?.message || '未知错误'}`);
                             }
 
-                            this.uploadProgress = ((i + 1) / totalParts) * 100;
-                            this.uploadStatusText = `分片 ${i + 1}/${totalParts} 完成 (${this.formatSize(end)} / ${this.formatSize(file.size)})`;
-                        }
+                            completedBytes += end - start;
+                            completedParts++;
+                            this.uploadProgress = (completedBytes / file.size) * 100;
+                            this.uploadLoaded = this.formatSize(completedBytes);
+                            this.uploadStatusText = `已完成 ${completedParts}/${totalParts} 片 (${this.formatSize(completedBytes)} / ${this.formatSize(file.size)})`;
+                          }
+                        };
+                        await Promise.all(Array.from({length: Math.min(4, totalParts)}, () => uploadPart()));
 
                         // Complete
                         this.uploadStatusText = '正在合并文件...';
@@ -790,6 +814,17 @@
                         this.uploadTotal = '';
                         this.uploadStatusText = '';
                     }
+                },
+
+                async openMCP(user) {
+                    try {
+                        const response = await this.fetchWithAuth(`/api/v1/users/${encodeURIComponent(user.id)}/mcp`);
+                        if (response.code !== 0) throw new Error(response.message || '获取失败');
+                        this.mcpUser = response.data.username;
+                        this.mcpUnavailable = !response.data.can_use_api;
+                        this.mcpConfig = JSON.stringify({mcpServers: {mdict: {url: new URL('/mcp', window.location.origin).href, headers: {Authorization: `Bearer ${response.data.api_token}`}}}}, null, 2);
+                        this.showMCP = true;
+                    } catch (e) { alert('获取 MCP 信息失败: ' + e.message); }
                 },
 
                 async createUser() {
@@ -889,7 +924,8 @@
 
                         if (response.code === 0) {
                             this.showAdminResetPassword = false;
-                            alert('密码已重置');
+                            if (this.adminResetUser.id === this.user.id) { this.logout(); this.showLogin = true; alert('密码已重置，请重新登录'); }
+                            else { alert('密码已重置，该用户需要重新登录'); }
                         } else {
                             this.adminResetError = response.message || '重置失败';
                         }
@@ -918,7 +954,9 @@
                         if (response.code === 0) {
                             this.showChangePassword = false;
                             this.changePasswordForm = { old_password: '', new_password: '', confirm_password: '' };
-                            alert('密码修改成功');
+                            this.logout();
+                            this.showLogin = true;
+                            alert('密码修改成功，请重新登录');
                         } else {
                             this.changePasswordError = response.message || '修改失败';
                         }
@@ -1028,6 +1066,7 @@
                     this.token = null;
                     this.user = null;
                     this.isAdmin = false;
+                    this.showMCP = false; this.mcpConfig = "";
                     localStorage.removeItem('token');
                     localStorage.removeItem('refresh_token');
                     localStorage.removeItem('user');
