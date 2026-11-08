@@ -30,7 +30,7 @@ func (s *VocabularyStore) Set(userID, word string, level int) (*models.Vocabular
 	word = strings.TrimSpace(word)
 	now := time.Now().UTC()
 	_, err := s.store.db.Exec(`INSERT INTO vocabulary (user_id, word_key, word, level, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, word_key) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at`,
+		VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, word_key) DO UPDATE SET word=excluded.word, level=excluded.level, updated_at=excluded.updated_at`,
 		userID, vocabularyKey(word), word, level, now, now)
 	if err != nil {
 		return nil, err

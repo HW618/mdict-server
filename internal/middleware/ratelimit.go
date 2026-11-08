@@ -14,11 +14,12 @@ type RateLimiter struct {
 	visitors map[string]*visitor
 	rate     int
 	interval time.Duration
+	now      func() time.Time
 }
 
 type visitor struct {
-	count    int
-	lastSeen time.Time
+	count       int
+	windowStart time.Time
 }
 
 // NewRateLimiter creates a new rate limiter
@@ -29,6 +30,7 @@ func NewRateLimiter(rate int, interval time.Duration) *RateLimiter {
 		visitors: make(map[string]*visitor),
 		rate:     rate,
 		interval: interval,
+		now:      time.Now,
 	}
 
 	// Start cleanup goroutine
@@ -91,29 +93,21 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
+	now := rl.now()
 	v, exists := rl.visitors[ip]
-	if !exists {
+	if !exists || now.Sub(v.windowStart) >= rl.interval {
 		rl.visitors[ip] = &visitor{
-			count:    1,
-			lastSeen: time.Now(),
+			count:       1,
+			windowStart: now,
 		}
 		return true
 	}
 
-	// Check if interval has passed
-	if time.Since(v.lastSeen) > rl.interval {
-		v.count = 1
-		v.lastSeen = time.Now()
-		return true
-	}
-
-	// Check rate limit
 	if v.count >= rl.rate {
 		return false
 	}
 
 	v.count++
-	v.lastSeen = time.Now()
 	return true
 }
 
@@ -123,8 +117,9 @@ func (rl *RateLimiter) cleanup() {
 		time.Sleep(rl.interval)
 
 		rl.mu.Lock()
+		now := rl.now()
 		for ip, v := range rl.visitors {
-			if time.Since(v.lastSeen) > rl.interval {
+			if now.Sub(v.windowStart) > rl.interval {
 				delete(rl.visitors, ip)
 			}
 		}

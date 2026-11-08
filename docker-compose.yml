@@ -8,7 +8,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "8055:8080"
     volumes:
       - ./dicts:/dicts
       - ./data:/data
@@ -19,6 +19,7 @@ services:
       - DICT_DIR=/dicts
       - DATA_DIR=/data
       - SERVER_PORT=8080
+      - SKILL_SERVER_URL=${SKILL_SERVER_URL:-http://localhost:8055}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}

@@ -141,6 +141,7 @@ func (e *Engine) LoadFile(filename string) error {
 }
 
 // disableOrphans marks DB records as disabled when the corresponding .mdx file no longer exists on disk.
+// Must be called with e.mu held. Loaded entries whose files disappeared are dropped from memory too.
 func (e *Engine) disableOrphans() error {
 	allDicts, err := e.dictStore.List()
 	if err != nil {
@@ -148,18 +149,19 @@ func (e *Engine) disableOrphans() error {
 	}
 
 	for _, d := range allDicts {
-		if _, loaded := e.dicts[d.ID]; loaded {
+		mdxPath := filepath.Join(e.dictDir, d.Filename)
+		if _, err := os.Stat(mdxPath); !os.IsNotExist(err) {
 			continue
 		}
-		// Not loaded — check if file exists
-		mdxPath := filepath.Join(e.dictDir, d.Filename)
-		if _, err := os.Stat(mdxPath); os.IsNotExist(err) {
-			if d.IsEnabled {
-				if err := e.dictStore.UpdateStatus(d.ID, false); err != nil {
-					log.Error().Err(err).Str("id", d.ID).Str("filename", d.Filename).Msg("Failed to disable orphaned dictionary")
-				} else {
-					log.Warn().Str("id", d.ID).Str("filename", d.Filename).Msg("Disabled orphaned dictionary (file missing)")
-				}
+		if _, loaded := e.dicts[d.ID]; loaded {
+			delete(e.dicts, d.ID)
+			log.Warn().Str("id", d.ID).Str("filename", d.Filename).Msg("Unloaded missing dictionary")
+		}
+		if d.IsEnabled {
+			if err := e.dictStore.UpdateStatus(d.ID, false); err != nil {
+				log.Error().Err(err).Str("id", d.ID).Str("filename", d.Filename).Msg("Failed to disable orphaned dictionary")
+			} else {
+				log.Warn().Str("id", d.ID).Str("filename", d.Filename).Msg("Disabled orphaned dictionary (file missing)")
 			}
 		}
 	}
@@ -370,10 +372,13 @@ func (e *Engine) Search(word string, dictID string) (*models.SearchResult, error
 			Int("rawHTMLLen", len(rawHTML)).
 			Msg("Extracted style blocks from dictionary HTML")
 		cleanHTML := e.sanitizer.Sanitize(rawHTML)
-		// Re-inject style blocks after sanitization, with rewritten URLs
+		// Re-inject style blocks after sanitization, with rewritten URLs.
+		// CSS must be neutralized first: browsers end a <style> element at
+		// the first </style sequence even when it appears inside CSS text.
 		if len(styleBlocks) > 0 {
 			var styleHTML string
 			for _, css := range styleBlocks {
+				css = sanitizeStyleCSS(css)
 				css = rewriteAssetURLs(css, id)
 				styleHTML += "<style type=\"text/css\">" + css + "</style>"
 			}
@@ -434,6 +439,14 @@ func extractStyleBlocks(html string) []string {
 	}
 
 	return blocks
+}
+
+// styleBreakoutPattern matches sequences that close a surrounding <style> element.
+var styleBreakoutPattern = regexp.MustCompile(`(?i)</\s*style`)
+
+// sanitizeStyleCSS removes markup that could break out of a re-injected <style> tag.
+func sanitizeStyleCSS(css string) string {
+	return styleBreakoutPattern.ReplaceAllString(css, "")
 }
 
 // assetURLPattern matches href/src attributes referencing resource files.
@@ -649,25 +662,53 @@ func (e *Engine) GetAsset(dictID, assetPath string) ([]byte, string, error) {
 	// 2. Try resource subdirectory (e.g. dictDir/DictName/style.css)
 	if dict.resDir != "" {
 		fsPath := filepath.Join(e.dictDir, dict.resDir, filepath.FromSlash(assetPath))
-		if isPathSafe(e.dictDir, fsPath) {
-			if data, err := os.ReadFile(fsPath); err == nil {
-				mimeType := GetMimeType(assetPath)
-				return data, mimeType, nil
-			}
+		if data, err := readContainedAsset(e.dictDir, fsPath); err == nil {
+			return data, GetMimeType(assetPath), nil
 		}
 	}
 
-	// 3. Try dictDir root (e.g. dictDir/style.css)
+	// 3. Try dictDir root (e.g. dictDir/style.css). Only published asset types
+	// are readable, so this cannot be used to download .mdx/.mdd files.
 	fsPath := filepath.Join(e.dictDir, filepath.FromSlash(assetPath))
-	if !isPathSafe(e.dictDir, fsPath) {
-		return nil, "", fmt.Errorf("asset not found: %s", assetPath)
-	}
-	if data, err := os.ReadFile(fsPath); err == nil {
-		mimeType := GetMimeType(assetPath)
-		return data, mimeType, nil
+	if data, err := readContainedAsset(e.dictDir, fsPath); err == nil {
+		return data, GetMimeType(assetPath), nil
 	}
 
 	return nil, "", fmt.Errorf("asset not found: %s", assetPath)
+}
+
+func isServableAsset(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
+		".mp3", ".wav", ".ogg", ".m4a", ".woff", ".woff2", ".ttf", ".eot", ".ico", ".pdf":
+		return true
+	default:
+		return false
+	}
+}
+
+// readContainedAsset reads a dictionary resource that stays inside baseDir.
+// Symbolic links are resolved before the containment check, and dictionary
+// archives plus upload scratch files are never returned.
+func readContainedAsset(baseDir, candidate string) ([]byte, error) {
+	if !isPathSafe(baseDir, candidate) || !isServableAsset(candidate) {
+		return nil, fmt.Errorf("asset not found")
+	}
+	resolvedBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return nil, err
+	}
+	if !isPathSafe(resolvedBase, resolved) || !isServableAsset(resolved) {
+		return nil, fmt.Errorf("asset not found")
+	}
+	if strings.Contains(filepath.ToSlash(resolved), "/.uploads/") {
+		return nil, fmt.Errorf("asset not found")
+	}
+	return os.ReadFile(resolved)
 }
 
 // DebugLogAssetMiss logs when an asset lookup fails (for troubleshooting dictionary styling).

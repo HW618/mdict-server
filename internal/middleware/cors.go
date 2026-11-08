@@ -23,22 +23,49 @@ func DefaultCORSConfig() CORSConfig {
 	}
 }
 
-// CORS returns a CORS middleware
+// CORS returns a CORS middleware.
+// Methods and headers fall back to the defaults when a caller only sets origins,
+// which is how the server is configured.
 func CORS(config CORSConfig) gin.HandlerFunc {
+	defaults := DefaultCORSConfig()
+	if len(config.AllowMethods) == 0 {
+		config.AllowMethods = defaults.AllowMethods
+	}
+	if len(config.AllowHeaders) == 0 {
+		config.AllowHeaders = defaults.AllowHeaders
+	}
+
 	return func(c *gin.Context) {
+		// Apply the page policy to ordinary navigations too. Those requests
+		// have no Origin header, so they never enter the CORS branch below.
+		c.Header("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; "+
+				"style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "+
+				"img-src 'self' data: blob:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self';")
+
 		origin := c.Request.Header.Get("Origin")
 		if origin == "" {
 			c.Next()
 			return
 		}
 
-		// Check if origin is allowed
+		// Check if origin is allowed. A bare "*" must never be paired with
+		// Access-Control-Allow-Credentials, so credentials are only sent for
+		// explicitly listed origins.
 		allowed := false
+		exactOrigin := false
 		for _, o := range config.AllowOrigins {
 			o = strings.TrimSpace(o)
-			if o == "*" || o == origin {
+			if o == "*" {
 				allowed = true
-				break
+				continue
+			}
+			if o == origin {
+				allowed = true
+				exactOrigin = true
 			}
 		}
 
@@ -51,17 +78,10 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Origin", origin)
 		c.Header("Access-Control-Allow-Methods", strings.Join(config.AllowMethods, ", "))
 		c.Header("Access-Control-Allow-Headers", strings.Join(config.AllowHeaders, ", "))
-		c.Header("Access-Control-Allow-Credentials", "true")
+		if exactOrigin {
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
 		c.Header("Access-Control-Max-Age", "86400")
-
-		// Content-Security-Policy: allow CDN resources used by templates
-		c.Header("Content-Security-Policy",
-			"default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; "+
-				"style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "+
-				"img-src 'self' data: blob:; "+
-				"font-src 'self' data:; "+
-				"connect-src 'self';")
 
 		// Handle preflight request
 		if c.Request.Method == http.MethodOptions {

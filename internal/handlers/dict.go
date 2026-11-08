@@ -274,6 +274,7 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		if i < len(relativePaths) && relativePaths[i] != "" {
 			relPath, err := sanitizeRelativePath(relativePaths[i])
 			if err != nil {
+				_ = file.Close()
 				results = append(results, uploadResult{Filename: header.Filename, Error: "Unsafe path"})
 				continue
 			}
@@ -284,6 +285,7 @@ func (h *DictHandler) Upload(c *gin.Context) {
 
 		// Ensure parent directory exists
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			_ = file.Close()
 			results = append(results, uploadResult{Filename: safeFilename, Error: "Failed to create directory"})
 			continue
 		}
@@ -353,6 +355,7 @@ func (h *DictHandler) Upload(c *gin.Context) {
 		if err := h.engine.LoadFile(name); err != nil {
 			log.Error().Err(err).Str("filename", name).Msg("Failed to load uploaded dictionary")
 			results[mdxResultIndexes[i]].Error = "词典解析失败: " + err.Error()
+			h.discardFailedUpload(name)
 		}
 	}
 
@@ -586,12 +589,19 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	}
 	upload := val.(*chunkedUpload)
 
+	upload.mu.Lock()
+	chunks := make(map[int]string, len(upload.chunks))
+	for idx, path := range upload.chunks {
+		chunks[idx] = path
+	}
+	upload.mu.Unlock()
+
 	// Verify all chunks received
-	if len(upload.chunks) != upload.TotalParts {
+	if len(chunks) != upload.TotalParts {
 		h.cleanupChunks(upload)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
-			"message": fmt.Sprintf("Missing chunks: got %d, expected %d", len(upload.chunks), upload.TotalParts),
+			"message": fmt.Sprintf("Missing chunks: got %d, expected %d", len(chunks), upload.TotalParts),
 			"data":    nil,
 		})
 		return
@@ -623,14 +633,14 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	}
 
 	var totalWritten int64
-	indices := make([]int, 0, len(upload.chunks))
-	for idx := range upload.chunks {
+	indices := make([]int, 0, len(chunks))
+	for idx := range chunks {
 		indices = append(indices, idx)
 	}
 	sort.Ints(indices)
 
 	for _, idx := range indices {
-		chunkPath := upload.chunks[idx]
+		chunkPath := chunks[idx]
 		cf, err := os.Open(chunkPath)
 		if err != nil {
 			_ = outFile.Close()
@@ -680,6 +690,7 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 		}
 		if err := h.engine.LoadFile(name); err != nil {
 			log.Error().Err(err).Str("filename", name).Msg("Failed to load uploaded dictionary")
+			h.discardFailedUpload(name)
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": 42201, "message": "词典解析失败: " + err.Error()})
 			return
 		}
@@ -714,8 +725,25 @@ func (h *DictHandler) UploadComplete(c *gin.Context) {
 	})
 }
 
+// discardFailedUpload removes a dictionary file that was stored but never
+// registered. A later restart would otherwise keep retrying the bad file.
+func (h *DictHandler) discardFailedUpload(name string) {
+	if h.dictStore != nil {
+		exists, err := h.dictStore.ExistsByFilename(name)
+		if err != nil || exists {
+			return
+		}
+	}
+	path, err := safePath(h.dictDir, name)
+	if err != nil {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Error().Err(err).Str("filename", name).Msg("Failed to remove unloadable dictionary")
+	}
+}
+
 // cleanupChunks removes all temp chunk files for an upload.
-// Must be called with upload.mu held to avoid data race on upload.chunks.
 func (h *DictHandler) cleanupChunks(upload *chunkedUpload) {
 	upload.mu.Lock()
 	defer upload.mu.Unlock()

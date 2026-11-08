@@ -149,9 +149,12 @@ func TestVocabularyLifecyclePersistenceAndCase(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &entry); err != nil || entry.Data.Word != "APPLE" || entry.Data.Level != 5 {
+		t.Fatalf("upsert should refresh display casing: %s (%v)", rec.Body.String(), err)
+	}
 	rec, list := env.list("", token)
-	if rec.Code != http.StatusOK || list.Data.Total != 1 || len(list.Data.Items) != 1 || list.Data.Items[0].Level != 5 {
-		t.Fatalf("expected one updated entry: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || list.Data.Total != 1 || len(list.Data.Items) != 1 || list.Data.Items[0].Level != 5 || list.Data.Items[0].Word != "APPLE" {
+		t.Fatalf("expected one updated entry with refreshed casing: %d %s", rec.Code, rec.Body.String())
 	}
 	if err := env.db.Close(); err != nil {
 		t.Fatal(err)

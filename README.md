@@ -60,7 +60,7 @@ EOF
 docker-compose up -d
 ```
 
-访问 http://localhost:8080 开始使用。
+访问 http://localhost:8055 开始使用。
 
 ### 📖 文档
 
@@ -190,7 +190,7 @@ EOF
 docker-compose up -d
 ```
 
-Visit http://localhost:8080 to get started.
+Visit http://localhost:8055 to get started.
 
 ### 📖 Documentation
 

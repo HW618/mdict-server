@@ -12,7 +12,6 @@ function app() {
         showVocabulary: false, vocabularyItems: [], vocabularyTotal: 0, vocabularyPage: 1,
         vocabularyFilter: '', vocabularyKeyword: '', vocabularyLoading: false,
         vocabularyError: '', vocabularySaving: '', vocabularyListRequest: 0, vocabularySession: 0,
-        vocabularyTrigger: null,
 
         async init() {
             try {
@@ -24,6 +23,21 @@ function app() {
             }
             this.loadHistory();
             if (this.token) await this.loadDicts();
+            if (this.onVocabularyPage()) {
+                if (this.token && this.user) {
+                    await this.loadVocabularyList();
+                    this.$nextTick(() => this.$refs.vocabularySearch?.focus());
+                }
+                return;
+            }
+            const preset = new URLSearchParams(location.search).get('word');
+            if (preset) {
+                this.searchWord = preset;
+                await this.search();
+            }
+        },
+        onVocabularyPage() {
+            return typeof document !== 'undefined' && document.body?.dataset?.page === 'vocabulary';
         },
 
         async loadDicts() {
@@ -241,25 +255,12 @@ function app() {
                     this.wordLevelLoading = false;
                     this.wordLevelError = '';
                 }
-                if (this.showVocabulary) await this.loadVocabularyList(this.vocabularyPage);
+                if (this.onVocabularyPage()) await this.loadVocabularyList(this.vocabularyPage);
             } catch (_) {
                 if (session === this.vocabularySession) this.vocabularyError = '生词本保存失败，请重试。';
             } finally {
                 if (session === this.vocabularySession) this.vocabularySaving = '';
             }
-        },
-        openVocabulary(event) {
-            if (!this.token) { this.openLogin(); return; }
-            this.vocabularyTrigger = event?.currentTarget || null;
-            this.showVocabulary = true;
-            this.vocabularyError = '';
-            this.loadVocabularyList();
-            this.$nextTick(() => this.$refs.vocabularySearch.focus());
-        },
-        closeVocabulary() {
-            this.showVocabulary = false;
-            this.vocabularyListRequest++;
-            this.vocabularyTrigger?.focus();
         },
         async loadVocabularyList(page = 1) {
             if (!this.token || !this.user) return;
@@ -286,19 +287,6 @@ function app() {
                 if (request === this.vocabularyListRequest && session === this.vocabularySession) this.vocabularyLoading = false;
             }
         },
-        queryVocabularyWord(word) {
-            this.closeVocabulary();
-            this.selectSuggestion(word);
-            this.$refs.searchInput.focus();
-        },
-        trapVocabularyFocus(event) {
-            const items = [...event.currentTarget.querySelectorAll('button:not(:disabled), input, select')].filter(el => el.offsetParent !== null);
-            const first = items[0], last = items[items.length - 1];
-            if (!first) return;
-            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-        },
-
         sanitizeHtml(html) {
             return DOMPurify.sanitize(html || '', {
                 ALLOWED_TAGS: ['div', 'span', 'p', 'b', 'i', 'u', 'a', 'img', 'audio', 'source', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'font', 'sup', 'sub', 'blockquote', 'style', 'dl', 'dt', 'dd', 'pre', 'code', 'em', 'strong', 'small', 'mark', 'abbr', 'ruby', 'rt', 'rp', 'bdo'],
@@ -379,7 +367,7 @@ function app() {
         },
 
         openLogin() { this.showLogin = true; this.$nextTick(() => this.$refs.loginUsername.focus()); },
-        closeLogin() { this.showLogin = false; this.$refs.searchInput.focus(); },
+        closeLogin() { this.showLogin = false; this.$refs.searchInput?.focus(); },
         trapLoginFocus(event) {
             const items = Array.from(event.currentTarget.querySelectorAll('button:not(:disabled), input'));
             const first = items[0], last = items[items.length - 1];
@@ -403,7 +391,8 @@ function app() {
                     this.loginForm = { username: '', password: '' };
                     this.loadHistory();
                     await this.loadDicts();
-                    if (this.searchWord.trim()) await this.search();
+                    if (this.onVocabularyPage()) await this.loadVocabularyList();
+                    else if (this.searchWord.trim()) await this.search();
                 } else this.loginError = '登录失败，请检查用户名和密码。';
             } catch (_) { this.loginError = '网络连接失败，请重试。'; }
             finally { this.loginLoading = false; }

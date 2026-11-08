@@ -112,8 +112,13 @@ func (mdict *MdictBase) readDictHeader() error {
 		meta.encoding = EncodingUtf8
 	}
 
-	// Correct encoding for MDD type
-	if mdict.fileType == MdictTypeMdd {
+	// Engine 3.0 stores MDX and MDD keys as UTF-8. Older MDD files use UTF-16.
+	if meta.version >= 3 {
+		meta.encoding = EncodingUtf8
+		if uuid := strings.TrimSpace(headerInfo.UUID); uuid != "" {
+			meta.v3Key = deriveV3Key([]byte(uuid))
+		}
+	} else if mdict.fileType == MdictTypeMdd {
 		meta.encoding = EncodingUtf16
 	}
 
@@ -722,30 +727,52 @@ func (mdict *MdictBase) decodeKeyEntries(keyBlockDataCompressBuffer []byte) erro
 
 func (mdict *MdictBase) splitKeyBlock(keyBlock []byte) []*MDictKeywordEntry {
 	width := 1
-	if mdict.meta.encoding == EncodingUtf16 || mdict.fileType == MdictTypeMdd {
+	if mdict.meta.encoding == EncodingUtf16 || (mdict.fileType == MdictTypeMdd && mdict.meta.version < 3) {
 		width = 2
 	}
 
 	var keyList []*MDictKeywordEntry
 	keyStartIndex := 0
+	numberWidth := mdict.meta.numberWidth
+	if numberWidth <= 0 {
+		return keyList
+	}
 
 	for keyStartIndex < len(keyBlock) {
+		if keyStartIndex+numberWidth > len(keyBlock) {
+			break
+		}
 		var recordStartOffset int64
-		if mdict.meta.numberWidth == 8 {
-			recordStartOffset = int64(beBinToU64(keyBlock[keyStartIndex : keyStartIndex+mdict.meta.numberWidth]))
+		if numberWidth == 8 {
+			recordStartOffset = int64(beBinToU64(keyBlock[keyStartIndex : keyStartIndex+numberWidth]))
 		} else {
-			recordStartOffset = int64(beBinToU32(keyBlock[keyStartIndex : keyStartIndex+mdict.meta.numberWidth]))
+			recordStartOffset = int64(beBinToU32(keyBlock[keyStartIndex : keyStartIndex+numberWidth]))
 		}
 
-		keyEndIndex := keyStartIndex + mdict.meta.numberWidth
-		for i := keyEndIndex; i < len(keyBlock); i += width {
-			if (width == 1 && keyBlock[i] == 0) || (width == 2 && keyBlock[i] == 0 && keyBlock[i+1] == 0) {
+		keyEndIndex := keyStartIndex + numberWidth
+		terminatorFound := false
+		for i := keyEndIndex; i+width <= len(keyBlock); i += width {
+			if width == 1 {
+				if keyBlock[i] == 0 {
+					keyEndIndex = i
+					terminatorFound = true
+					break
+				}
+				continue
+			}
+			if keyBlock[i] == 0 && keyBlock[i+1] == 0 {
 				keyEndIndex = i
+				terminatorFound = true
 				break
 			}
 		}
+		if !terminatorFound {
+			// Truncated or corrupt block: consume the remainder instead of
+			// reading past the end looking for a UTF-16 NUL.
+			keyEndIndex = len(keyBlock)
+		}
 
-		keyTextBytes := keyBlock[keyStartIndex+mdict.meta.numberWidth : keyEndIndex]
+		keyTextBytes := keyBlock[keyStartIndex+numberWidth : keyEndIndex]
 		keyText := string(keyTextBytes)
 		var err error
 
@@ -756,15 +783,19 @@ func (mdict *MdictBase) splitKeyBlock(keyBlock []byte) []*MDictKeywordEntry {
 			}
 		}
 
-		if mdict.fileType == MdictTypeMdd {
+		if mdict.fileType == MdictTypeMdd && mdict.meta.version < 3 {
 			keyText, err = decodeLittleEndianUtf16(keyTextBytes)
 			if err != nil {
-				log.Errorf("Error decoding UTF-16 for MDD key text (offset %d): %v. KeyTextBytes: %x", keyStartIndex+mdict.meta.numberWidth, err, keyTextBytes)
+				log.Errorf("Error decoding UTF-16 for MDD key text (offset %d): %v. KeyTextBytes: %x", keyStartIndex+numberWidth, err, keyTextBytes)
 				keyText = string(keyTextBytes) // Fallback to raw string to avoid panic
 			}
 		}
 
-		keyStartIndex = keyEndIndex + width
+		if terminatorFound {
+			keyStartIndex = keyEndIndex + width
+		} else {
+			keyStartIndex = len(keyBlock)
+		}
 		entry := &MDictKeywordEntry{
 			RecordStartOffset: recordStartOffset,
 			KeyWord:           keyText,
@@ -1009,6 +1040,9 @@ func (mdict *MdictBase) keywordEntryToIndex(item *MDictKeywordEntry) (*MDictKeyw
 }
 
 func (mdict *MdictBase) locateByKeywordIndex(index *MDictKeywordIndex) ([]byte, error) {
+	if mdict.meta.version >= 3 {
+		return mdict.locateV3Record(index)
+	}
 	return _locateDefByKWIndexInternal(index,
 		mdict.filePath,
 		mdict.meta.encryptType == EncryptRecordEnc,
@@ -1159,13 +1193,7 @@ func (mdict *MdictBase) locateByKeywordEntry(item *MDictKeywordEntry) ([]byte, e
 
 	log.Debugf("Obtained keyword index for '%s': %+v", item.KeyWord, index.RecordBlock)
 
-	return _locateDefByKWIndexInternal(index,
-		mdict.filePath,
-		mdict.meta.encryptType == EncryptRecordEnc,
-		mdict.fileType == MdictTypeMdd,
-		mdict.meta.encoding == EncodingUtf16,
-		item.KeyWord,
-	)
+	return mdict.locateByKeywordIndex(index)
 }
 
 // GetKeyWordEntries returns all keyword entries in the dictionary.

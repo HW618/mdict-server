@@ -8,6 +8,11 @@
     <script defer src="/static/alpine.min.js"></script>
     <style>
         [x-cloak] { display: none !important; }
+        .mcp-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 36px; margin-top: 32px; }
+        .mcp-button { min-width: 120px; padding: 10px 22px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: #374151; font-size: 14px; line-height: 1.2; }
+        .mcp-button:hover { background: #f3f4f6; }
+        .mcp-button-primary { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+        .mcp-button-primary:hover { background: #1d4ed8; }
     </style>
 </head>
 <body class="admin-app bg-gray-50 min-h-screen" x-data="adminApp()">
@@ -365,7 +370,7 @@
             <p class="text-sm text-gray-600 mb-2">Streamable HTTP；请妥善保管令牌。</p>
             <p x-show="mcpUnavailable" class="text-sm text-red-600 mb-2">该用户尚未获得 API 访问权限。</p>
             <pre class="bg-gray-100 rounded p-3 text-xs overflow-auto" x-text="mcpConfig"></pre>
-            <div class="flex justify-end gap-3 mt-4"><button @click="copyToken(mcpConfig)" class="text-blue-600">复制配置</button><button @click="showMCP = false; mcpConfig = ''" class="text-gray-600">关闭</button></div>
+            <div class="mcp-actions"><button type="button" class="mcp-button mcp-button-primary" @click="copyToken(mcpConfig)">复制配置</button><button type="button" class="mcp-button" @click="showMCP = false; mcpConfig = ''">关闭</button></div>
         </div>
     </div>
 

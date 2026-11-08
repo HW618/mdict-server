@@ -96,6 +96,11 @@ type mdictMeta struct {
 	title                    string
 	creationDate             string
 	generatedByEngineVersion string
+
+	// v3Key is the 16-byte engine 3.0 block key derived from the header UUID.
+	// It stays nil when the dictionary has no UUID; each block then uses the
+	// RIPEMD-128 digest of its own checksum.
+	v3Key []byte
 }
 
 type mdictKeyBlockMeta struct {

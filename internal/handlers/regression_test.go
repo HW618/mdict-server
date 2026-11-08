@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,9 @@ func TestUploadRejectsInvalidDictionary(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &response)
 	if len(response.Data) != 1 || response.Data[0].Error == "" {
 		t.Fatalf("invalid dictionary reported success: %s", rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "invalid.mdx")); !os.IsNotExist(err) {
+		t.Fatalf("invalid dictionary left on disk: %v", err)
 	}
 }
 
@@ -189,5 +193,59 @@ func TestChunkedUploadLoadsDictionaryAndRejectsWrongSize(t *testing.T) {
 	}
 	if _, err := ds.GetByFilename("sample.mdx"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChunkedUploadRemovesUnreadableDictionary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := store.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	dir := t.TempDir()
+	ds := store.NewDictStore(db)
+	h := NewDictHandler(dict.NewEngine(dir, ds), ds, dir, 0)
+	router := gin.New()
+	router.POST("/init", h.UploadInit)
+	router.PUT("/chunk", h.UploadChunk)
+	router.POST("/complete", h.UploadComplete)
+
+	payload := []byte("not a dictionary")
+	req := httptest.NewRequest(http.MethodPost, "/init", strings.NewReader(fmt.Sprintf(`{"filename":"broken.mdx","file_size":%d,"chunk_size":%d}`, len(payload), len(payload))))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	var initResp struct {
+		Data struct {
+			UploadID string `json:"upload_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &initResp); err != nil || initResp.Data.UploadID == "" {
+		t.Fatalf("init: %s", rec.Body.String())
+	}
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	form.WriteField("upload_id", initResp.Data.UploadID)
+	form.WriteField("chunk_index", "0")
+	part, _ := form.CreateFormFile("chunk", "part")
+	part.Write(payload)
+	form.Close()
+	req = httptest.NewRequest(http.MethodPut, "/chunk", &body)
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chunk: %d %s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/complete", strings.NewReader(fmt.Sprintf(`{"upload_id":%q}`, initResp.Data.UploadID)))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("unreadable dictionary reported success: %s", rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "broken.mdx")); !os.IsNotExist(err) {
+		t.Fatalf("unreadable dictionary left on disk: %v", err)
 	}
 }

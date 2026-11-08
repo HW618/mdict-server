@@ -61,6 +61,22 @@ func TestRateLimiterReset(t *testing.T) {
 	}
 }
 
+func TestRateLimiterExpiresFromWindowStart(t *testing.T) {
+	current := time.Now()
+	limiter := NewRateLimiter(3, time.Minute)
+	limiter.now = func() time.Time { return current }
+
+	for i := 0; i < 3; i++ {
+		if !limiter.Allow("10.0.0.1") {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
+		current = current.Add(50 * time.Second)
+	}
+	if !limiter.Allow("10.0.0.1") {
+		t.Fatal("steady traffic under the limit was blocked because the window followed the latest request")
+	}
+}
+
 func TestRateLimiterConcurrent(t *testing.T) {
 	limiter := NewRateLimiter(100, time.Minute)
 

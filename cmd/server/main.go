@@ -94,6 +94,7 @@ func main() {
 
 	// Serve static files (templates)
 	router.StaticFile("/", "./templates/index.html")
+	router.StaticFile("/vocabulary", "./templates/vocabulary.html")
 	router.StaticFile("/admin", "./templates/admin.html")
 	router.Static("/static", "./templates/assets")
 

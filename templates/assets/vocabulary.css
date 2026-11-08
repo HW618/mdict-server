@@ -1,5 +1,3 @@
-.notebook-nav{font-size:13px;color:var(--muted)}
-.notebook-nav:hover{color:var(--accent)}
 .mobile-notebook{display:none}
 .result-title{min-width:0}
 .result-word-line{display:flex;align-items:center;flex-wrap:wrap;gap:14px 22px;margin-top:8px}
@@ -15,17 +13,22 @@
 .vocabulary-star:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .vocabulary-hint{font-size:10px;color:var(--muted);padding-left:3px}
 .vocabulary-feedback{font-size:12px;color:#a14b35;margin:8px 0 18px}
-.notebook-dialog{position:relative;background:var(--paper,#f7f8f2);border-radius:16px;padding:30px;width:100%;max-width:680px;max-height:min(85vh,820px);display:flex;flex-direction:column;box-shadow:0 20px 80px #122f2726}
+.notebook-workspace{grid-template-columns:minmax(0,760px);justify-content:center;padding-bottom:48px}
+.notebook-page,.notebook-gate{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px 36px 24px}
+.notebook-gate{text-align:center;padding:56px 36px}
+.notebook-gate h2{font-size:28px;font-weight:500}
+.notebook-gate p{color:var(--muted);margin:12px 0 24px;font-size:14px}
 .notebook-header h2{font-size:25px;font-weight:500;letter-spacing:.5px}
 .notebook-header p{font-size:12px;color:var(--muted);margin:7px 0 22px}
 .notebook-filters{display:flex;gap:12px;margin-bottom:18px}
 .notebook-filters input,.notebook-filters select{background:#fff;border:1px solid var(--line);border-radius:7px;padding:10px 12px;font-size:13px;min-width:0}
 .notebook-filters input{flex:1}
 .notebook-filters select{max-width:175px}
-.notebook-content{overflow-y:auto;min-height:100px;overscroll-behavior:contain}
+.notebook-content{min-height:120px}
+.notebook-content ul{list-style:none;margin:0;padding:0}
 .notebook-message{font-size:13px;line-height:1.9;color:var(--muted);padding:28px 12px;text-align:center}
 .notebook-row{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid var(--line)}
-.notebook-word{flex:1;min-width:0;text-align:left;color:var(--ink);font-family:Georgia,"Songti SC",serif;font-size:21px;overflow-wrap:anywhere}
+.notebook-word{flex:1;min-width:0;text-align:left;color:var(--ink);font-family:Georgia,"Songti SC",serif;font-size:21px;overflow-wrap:anywhere;text-decoration:none}
 .notebook-word:hover{color:var(--accent);text-decoration:underline;text-underline-offset:4px}
 .notebook-remove{font-size:12px;color:var(--muted);padding:6px}
 .notebook-remove:hover{color:#a14b35}
@@ -38,7 +41,7 @@
  .results-heading{align-items:flex-start}
  .results-heading .result-count{font-size:10px;padding-top:6px}
  .result-word-line{gap:12px}
- .notebook-dialog{padding:25px 18px}
+ .notebook-page,.notebook-gate{padding:25px 18px}
  .notebook-row{gap:6px;flex-wrap:wrap}
  .notebook-word{font-size:19px;flex-basis:100%}
  .notebook-remove{margin-left:auto}

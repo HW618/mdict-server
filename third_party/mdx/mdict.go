@@ -64,6 +64,11 @@ func (mdict *Mdict) init() error {
 		return err
 	}
 
+	// Engine 3.0 has no v2 key-block metadata. Entries are loaded with the typed blocks.
+	if mdict.meta.version >= 3 {
+		return nil
+	}
+
 	// Read key block metadata
 	if err := mdict.readKeyBlockMeta(); err != nil {
 		return err
@@ -75,6 +80,14 @@ func (mdict *Mdict) init() error {
 // PrepareForExternalIndex loads the minimum structures needed for ExportIndex and Resolve.
 // It avoids building the in-memory exact/comparable lookup tables used by BuildIndex.
 func (mdict *Mdict) PrepareForExternalIndex() error {
+	if mdict.meta.version >= 3 {
+		if err := mdict.loadFormatV3(); err != nil {
+			return err
+		}
+		mdict.buildRecordRangeTree()
+		return nil
+	}
+
 	if err := mdict.readKeyBlockInfo(); err != nil {
 		return err
 	}

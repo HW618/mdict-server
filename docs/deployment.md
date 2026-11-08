@@ -137,9 +137,9 @@ docker-compose logs -f
 
 #### 5. 访问服务
 
-- Web 界面: http://localhost:8080
-- 管理后台: http://localhost:8080/admin
-- 健康检查: http://localhost:8080/api/v1/health
+- Web 界面: http://localhost:8055
+- 管理后台: http://localhost:8055/admin
+- 健康检查: http://localhost:8055/api/v1/health
 
 ### Docker Compose 配置文件
 
@@ -151,7 +151,7 @@ services:
     image: ghcr.io/HW618/mdict-server:latest
     container_name: mdict-server
     ports:
-      - "8080:8080"
+      - "8055:8080"
     volumes:
       - ./dicts:/dicts
       - ./data:/data
@@ -162,6 +162,7 @@ services:
       - DICT_DIR=/dicts
       - DATA_DIR=/data
       - SERVER_PORT=8080
+      - SKILL_SERVER_URL=${SKILL_SERVER_URL:-http://localhost:8055}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
     restart: unless-stopped

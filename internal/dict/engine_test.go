@@ -113,6 +113,17 @@ func TestRewriteAssetURLs(t *testing.T) {
 	}
 }
 
+func TestSanitizeStyleCSS_RemovesStyleBreakout(t *testing.T) {
+	css := `.ok{color:red}</style><img src=x onerror=alert(1)><style>`
+	got := sanitizeStyleCSS(css)
+	if containsStr(got, "</style") || containsStr(got, "</STYLE") {
+		t.Fatalf("breakout sequence still present: %q", got)
+	}
+	if !containsStr(got, ".ok{color:red}") {
+		t.Fatalf("expected harmless CSS to remain, got %q", got)
+	}
+}
+
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {

@@ -42,10 +42,13 @@ type Dictionary struct {
 	StyleSheet               string   `xml:"StyleSheet,attr"`
 	Left2Right               string   `xml:"Left2Right,attr"`
 	RegisterBy               string   `xml:"RegisterBy,attr"`
+	UUID                     string   `xml:"UUID,attr"`
 }
 
 func parseXMLHeader(xmldata string) (*Dictionary, error) {
 	dic := &Dictionary{}
+	// Engine 3.0 headers are UTF-16 and end with a NUL terminator.
+	xmldata = strings.TrimRight(xmldata, "\x00")
 	err := xml.Unmarshal([]byte(strings.TrimSpace(xmldata)), dic)
 	if err != nil {
 		return nil, err
